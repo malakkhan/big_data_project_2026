@@ -1,0 +1,255 @@
+"""
+Algorithmic Modeling and Evaluation Engine.
+
+Utilizes XGBoost alongside Optuna for Bayesian Optimization.
+Strictly implements Stratified K-Fold Cross Validation and Early Stopping
+to prevent overfitting. Automatically tracks and saves ROC curves, confusion
+matrices, and rigorous statistical metrics for every hyperparameter variation.
+
+Classes:
+    XGBoostModeler: Primary engine mapping features into the gradient boosted model.
+"""
+
+import sys
+import logging
+import joblib
+import json
+import pandas as pd
+import numpy as np
+import xgboost as xgb
+import optuna
+import matplotlib.pyplot as plt
+from pathlib import Path
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import (
+    roc_auc_score, roc_curve, confusion_matrix, accuracy_score, 
+    precision_score, recall_score, ConfusionMatrixDisplay
+)
+
+from src import config
+
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+logger = logging.getLogger(__name__)
+
+class XGBoostModeler:
+    """
+    Orchestrates the XGBoost training lifecycle including hyperparameter tuning.
+
+    Attributes:
+        experiment_prefix (str): Label defining the macro environment state.
+        best_params (dict): The resolved optima for the XGB estimators.
+        final_model (xgb.XGBClassifier): The finalized trained predictor.
+    """
+
+    def __init__(self, experiment_prefix="default"):
+        """
+        Initializes the modeler.
+
+        Args:
+            experiment_prefix (str): Identifier used to save experiment metadata 
+                                     and precision visuals into `experiment_results/`.
+        """
+        self.experiment_prefix = experiment_prefix
+        self.best_params = None
+        self.final_model = None
+
+    def prep_data(self):
+        """
+        Loads and prepares the fully imputed feature dataframe.
+
+        Reads from the localized parity state (Parquet file), drops unstructured 
+        identifiers, and isolates the target matrix vectors.
+
+        Returns:
+            tuple: (X, y)
+                X (pd.DataFrame): The feature matrix.
+                y (pd.Series): The target binary labels.
+        """
+        input_parquet = config.OUTPUT_DIR / "parquet" / "imputed_features.parquet"
+        df = pd.read_parquet(input_parquet)
+        
+        drop_cols = ["tconst", "primaryTitle", "originalTitle", "synthetic_index"]
+        feature_cols = [c for c in df.columns if c not in drop_cols and c != "label"]
+        
+        X = df[feature_cols]
+        y = df["label"]
+        return X, y
+
+    def plot_and_save_artifacts(self, trial_number, y_true, y_probs, auc_score, params):
+        """
+        Calculates rigid binary metrics, plots ROC and Confusion Matrices, and persists them.
+
+        Args:
+            trial_number (int): The current Optuna iteration.
+            y_true (np.ndarray): The ground truth binary labels.
+            y_probs (np.ndarray): The continuous probability scores.
+            auc_score (float): The calculated aggregate area-under-curve.
+            params (dict): The tree hyperparameters used.
+
+        Returns:
+            None
+        """
+        experiment_dir = config.OUTPUT_DIR / "experiment_results"
+        trial_id = f"{self.experiment_prefix}_trial{trial_number}"
+        
+        y_pred = (y_probs >= 0.5).astype(int)
+        
+        acc = accuracy_score(y_true, y_pred)
+        prec = precision_score(y_true, y_pred, zero_division=0)
+        sens = recall_score(y_true, y_pred, zero_division=0) # sensitivity
+        
+        cm_matrix = confusion_matrix(y_true, y_pred)
+        
+        if cm_matrix.shape == (2, 2):
+            tn, fp, fn, tp = cm_matrix.ravel()
+        else:
+            # Handle edge cases where one class might be missing in validation splits
+            tn, fp, fn, tp = 0, 0, 0, 0
+            
+        spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+        
+        metrics = {
+            "roc_auc": float(auc_score),
+            "accuracy": float(acc),
+            "precision": float(prec),
+            "sensitivity": float(sens),
+            "specificity": float(spec)
+        }
+        
+        # Save JSON Stats & Parameters
+        with open(experiment_dir / f"{trial_id}.json", "w") as f:
+            json.dump({
+                "metrics": metrics,
+                "hyperparameters": params,
+                "confusion_matrix": {
+                    "True_Positives": int(tp),
+                    "False_Positives": int(fp),
+                    "True_Negatives": int(tn),
+                    "False_Negatives": int(fn)
+                }
+            }, f, indent=4)
+        
+        # Plot ROC
+        fpr, tpr, _ = roc_curve(y_true, y_probs)
+        plt.figure(figsize=(8, 6))
+        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {auc_score:.3f})')
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title(f'Receiver Operating Characteristic - {trial_id}')
+        plt.legend(loc="lower right")
+        
+        plot_path_roc = experiment_dir / f"{trial_id}_roc.png"
+        plt.savefig(plot_path_roc, bbox_inches='tight')
+        plt.close()
+
+        # Plot Confusion Matrix
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm_matrix)
+        fig, ax = plt.subplots(figsize=(6, 6))
+        disp.plot(ax=ax, cmap='Blues', colorbar=False, values_format='d')
+        plt.title(f'Confusion Matrix Grid - {trial_id}')
+        
+        plot_path_cm = experiment_dir / f"{trial_id}_cm.png"
+        plt.savefig(plot_path_cm, bbox_inches='tight')
+        plt.close()
+
+    def objective(self, trial, X, y):
+        """
+        Optuna objective function for K-Fold CV Bayesian optimization.
+
+        Args:
+            trial (optuna.trial.Trial): The active tuning trial.
+            X (pd.DataFrame): Training features.
+            y (pd.Series): Training labels.
+
+        Returns:
+            float: The aggregate out-of-fold ROC-AUC score.
+        """
+        param = {
+            'objective': 'binary:logistic',
+            'eval_metric': 'auc',
+            'n_estimators': trial.suggest_int('n_estimators', config.XGB_PARAM_BOUNDS['n_estimators'][0], config.XGB_PARAM_BOUNDS['n_estimators'][1]),
+            'learning_rate': trial.suggest_float('learning_rate', config.XGB_PARAM_BOUNDS['learning_rate'][0], config.XGB_PARAM_BOUNDS['learning_rate'][1], log=True),
+            'max_depth': trial.suggest_int('max_depth', config.XGB_PARAM_BOUNDS['max_depth'][0], config.XGB_PARAM_BOUNDS['max_depth'][1]),
+            'reg_alpha': trial.suggest_float('reg_alpha', config.XGB_PARAM_BOUNDS['reg_alpha'][0], config.XGB_PARAM_BOUNDS['reg_alpha'][1]), 
+            'reg_lambda': trial.suggest_float('reg_lambda', config.XGB_PARAM_BOUNDS['reg_lambda'][0], config.XGB_PARAM_BOUNDS['reg_lambda'][1]), 
+            'tree_method': 'hist',
+            'random_state': 42,
+            'verbosity': 0,
+            'n_jobs': -1
+        }
+        
+        skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=42) 
+        
+        oof_y_true = []
+        oof_y_probs = []
+        
+        for train_idx, val_idx in skf.split(X, y):
+            X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
+            X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
+            
+            model = xgb.XGBClassifier(**param, early_stopping_rounds=20)
+            model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+            
+            preds = model.predict_proba(X_val)[:, 1]
+            oof_y_true.extend(y_val)
+            oof_y_probs.extend(preds)
+            
+        final_auc = roc_auc_score(oof_y_true, oof_y_probs)
+        
+        self.plot_and_save_artifacts(trial.number, np.array(oof_y_true), np.array(oof_y_probs), final_auc, param)
+            
+        return final_auc
+
+    def run(self):
+        """
+        Executes the optimization framework and retrains the champion model.
+
+        Fires Optuna trials optimizing the ROC-AUC. Captures the best hyperparameters
+        and reconstructs an unrestrained final predictor, saving it to disk for the
+        MLOps module.
+
+        Returns:
+            None
+        """
+        logger.info(f"[{self.experiment_prefix}] Initializing XGBoost Optimization...")
+        
+        try:
+            X, y = self.prep_data()
+        except FileNotFoundError:
+            logger.error("Imputed features parquet not found. Ensure prior pipeline stages ran.")
+            return
+            
+        dataset_size = len(X)
+        logger.info(f"Training dataset size: {dataset_size} rows, {X.shape[1]} features.")
+        
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        study = optuna.create_study(direction="maximize")
+        study.optimize(lambda trial: self.objective(trial, X, y), n_trials=3) 
+        
+        self.best_params = study.best_params
+        logger.info(f"Optimization finished. Best ROC-AUC: {study.best_value:.4f}")
+        logger.info(f"Best Hyperparameters: {self.best_params}")
+        
+        final_params = {
+            'objective': 'binary:logistic',
+            'tree_method': 'hist',
+            'random_state': 42,
+            **self.best_params
+        }
+        self.final_model = xgb.XGBClassifier(**final_params)
+        self.final_model.fit(X, y) 
+        
+        model_path = config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_xgboost_best.joblib"
+        joblib.dump(self.final_model, model_path)
+        
+        feature_cols_path = config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_feature_schema.json"
+        pd.Series(X.columns).to_json(feature_cols_path, orient="records")
+        
+        logger.info(f"Final Model mapped to {model_path}")
+
+if __name__ == "__main__":
+    modeler = XGBoostModeler()
+    modeler.run()

@@ -1,0 +1,11 @@
+pyspark
+duckdb
+xgboost
+pandas
+numpy>=1.26.0
+scikit-learn
+unidecode
+scipy
+optuna
+requests
+tqdm

@@ -1,0 +1,11 @@
+pyspark>=4.1.0
+duckdb>=1.3.0
+xgboost>=3.0.0
+pandas>=2.0.0
+numpy>=1.26.0
+scikit-learn>=1.4.0
+unidecode
+scipy>=1.14.0
+optuna>=4.8.0
+requests
+tqdm
