@@ -1,0 +1,28 @@
+{
+    "metrics": {
+        "roc_auc": 0.9862821829276788,
+        "accuracy": 0.9497216129576515,
+        "precision": 0.943476577622919,
+        "sensitivity": 0.9412900733874082,
+        "specificity": 0.9562612342720191
+    },
+    "hyperparameters": {
+        "objective": "binary:logistic",
+        "eval_metric": "auc",
+        "n_estimators": 396,
+        "learning_rate": 0.10738229720234208,
+        "max_depth": 9,
+        "reg_alpha": 4.255076736445881,
+        "reg_lambda": 1.3029870680770717,
+        "tree_method": "hist",
+        "random_state": 42,
+        "verbosity": 0,
+        "n_jobs": -1
+    },
+    "confusion_matrix": {
+        "True_Positives": 2437,
+        "False_Positives": 146,
+        "True_Negatives": 3192,
+        "False_Negatives": 152
+    }
+}

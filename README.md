@@ -13,6 +13,7 @@ The pipeline is divided into six decoupled phases, ensuring scalability and main
 5.  **Bayesian Optimization:** Leverages Optuna to tune XGBoost hyperparameters, optimizing for ROC-AUC via Stratified K-Fold. (Responsible script: `src/modeling.py`)
 6.  **MLOps & Drift Governance:** Implements K-S Test, PSI, and KL Divergence to detect covariate and semantic drift. (Responsible script: `src/mlops.py`)
 7.  **Global Experimentation Engine:** In-memory grid-search evaluator looping through massive hyperparameters combinations. Generates explicit ROC curves, Confusion Matrices, and performance statistics securely across configurations. (Responsible script: `experiment_runner.py`)
+8.  **Unseen Inference Engine:** End-to-end evaluation pipeline securely predicting unseen testing arrays without corrupting metrics via artifact deletions, exporting strict logical `True`/`False` text files natively. (Responsible script: `inference.py`)
 
 ## Directory Structure;  
 ```text
@@ -20,6 +21,7 @@ big_data_project_2026/
 ├── requirements.txt         # Core dependencies (PySpark, DuckDB, XGBoost, Optuna)
 ├── prepare_data.py          # Phase 1 & 2: PySpark Ingestion + Graph + TMDB API
 ├── run_experiments.py       # Phase 3-5: Grid Search over DuckDB, Imputation, & Models
+├── inference.py             # Unseen evaluation scripting (test/validation outputs)
 ├── src/
 │   ├── ingestion.py         # PySpark data cleaning & normalization
 │   ├── graph_features.py    # Network analysis & bipartite graphs
@@ -51,3 +53,9 @@ big_data_project_2026/
     python run_experiments.py
     ```
     *All evaluation matrices, ROC plots, and statistical JSON sheets (`accuracy`, `precision`, `sensitivity`) will dynamically output directly into `/output/experiment_results/`!*
+
+5.  **Execute the Inference Predictor:**
+    Takes the precise macroscopic combination that "won" the experiments suite and pipes pure unseen CSV data (e.g. `test_hidden.csv` and `validation_hidden.csv`) into the generated Optuna `.joblib` model. Outputs strictly formatted `True`/`False` text files natively per grader constraints.
+    ```bash
+    python inference.py --mad 3.0 --epochs 10 --bs 128 --lr 0.001 --disable-imputation
+    ```

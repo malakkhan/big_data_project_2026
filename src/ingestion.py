@@ -67,6 +67,8 @@ class PySparkIngestor:
         num_header_cols = len(actual_headers)
         num_data_cols = len(df.columns)
         
+        logger.info(f"   -> [STRUCTURAL]: Evaluating schema alignments. Header fields: {num_header_cols} | Implied Vectors: {num_data_cols}")
+        
         if num_data_cols > num_header_cols:
             adjusted_headers = ["synthetic_index"] + [h.strip() for h in actual_headers]
             for i, c in enumerate(df.columns):
@@ -78,6 +80,7 @@ class PySparkIngestor:
         
         df = df.filter(F.col(adjusted_headers[-1]) != actual_headers[-1])
         
+        logger.info("   -> [CLEANING]: Standardizing innumerable null representations into pure `None/NaN` formats.")
         null_markers = ['\\N', ',,', '', ' ']
         for col_name in df.columns:
             df = df.withColumn(
@@ -85,6 +88,7 @@ class PySparkIngestor:
                 F.when(F.trim(F.col(col_name)).isin(null_markers), F.lit(None)).otherwise(F.col(col_name))
             )
         
+        logger.info("   -> [TEMPORAL]: Intercepting temporal misalignment and reallocating sequential parameters.")
         if "startYear" in df.columns and "endYear" in df.columns:
             df = df.withColumn(
                 "temp_start",
@@ -109,11 +113,13 @@ class PySparkIngestor:
         diacritics = "ÀÁÂÃÄÅàáâãäåÒÓÔÕÖØòóôõöøÈÉÊËèéêëÇçÌÍÎÏìíîïÙÚÛÜùúûüÿÑñ"
         ascii_repl = "AAAAAAaaaaaaOOOOOOooooooEEEEeeeeCcIIIIiiiiUUUUuuuuyNn"
         
+        logger.info("   -> [TRANSLITERATION]: Pushing native JVM NFKD ASCII transliteration functions over mojibake text.")
         if "primaryTitle" in df.columns:
             df = df.withColumn("primaryTitle", F.lower(F.translate(F.col("primaryTitle"), diacritics, ascii_repl)))
         if "originalTitle" in df.columns:
             df = df.withColumn("originalTitle", F.lower(F.translate(F.col("originalTitle"), diacritics, ascii_repl)))
 
+        logger.info("   -> [CASTING]: Resolving ANSI restrictions recursively across numeric bounds.")
         if "runtimeMinutes" in df.columns:
             df = df.withColumn("runtimeMinutes", F.col("runtimeMinutes").cast("int"))
         if "numVotes" in df.columns:
@@ -157,17 +163,17 @@ class PySparkIngestor:
         return df
 
 
-    def run(self):
+    def run(self, target_pattern="train-*.csv"):
         """
         Executes sequence flows fetching and translating all heterogeneous raw models.
 
         Args:
-            None
+            target_pattern (str): The filename wildcard identifying core tables.
 
         Returns:
             None
         """
-        csv_path = str(config.DATA_DIR / "train-*.csv")
+        csv_path = str(config.DATA_DIR / target_pattern)
         directing_path = str(config.DATA_DIR / "directing.json")
         writing_path = str(config.DATA_DIR / "writing.json")
 

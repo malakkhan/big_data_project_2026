@@ -99,13 +99,22 @@ class DeepImputer:
             pd.DataFrame: Imputed copy of the matrix devoid of specified null anomalies.
         """
         missing_mask = df[target_col].isna()
-        if not missing_mask.any():
+        if not missing_mask.any() or missing_mask.all():
+            logger.warning(f"Target {target_col} is completely null or completely dense. Skipping Deep Imputation.")
             return df
             
+        # Protect HashingVectorizer from crashing on native Python NoneTypes
+        for col in self.text_features:
+            if col in df.columns and col != target_col:
+                df[col] = df[col].fillna("")
+                
         input_cols = [c for c in df.columns if c != target_col and c not in ["tconst", "label", "synthetic_index"]]
         
         train_df = df[~missing_mask]
         predict_df = df[missing_mask]
+        
+        # Purge entirely hollow columns from the context map to prevent Scikit-Learn StandardScaler dimensional collapse
+        input_cols = [c for c in input_cols if train_df[c].notna().any()]
         
         if len(train_df) < 50:
             fallback = df[target_col].mode()[0] if df[target_col].dtype == 'O' else df[target_col].median()
@@ -147,7 +156,15 @@ class DeepImputer:
         
         pipeline.fit(train_df, train_df[target_col])
         predicted_values = pipeline.predict(predict_df)
-        df.loc[missing_mask, target_col] = predicted_values
+        
+        # Prevent aggressive Pandas PyArrow strict casting failures (e.g., float regressions into Int32 blocks)
+        predicted_series = pd.Series(predicted_values, index=predict_df.index)
+        if is_numeric:
+            df[target_col] = df[target_col].astype(float)
+        else:
+            df[target_col] = df[target_col].astype(object)
+            
+        df.loc[missing_mask, target_col] = predicted_series
         
         return df
 

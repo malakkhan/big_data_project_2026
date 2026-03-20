@@ -245,11 +245,13 @@ class GraphFeatureExtractor:
         final_df = movies_df
         
         if dir_path.exists():
+            logger.info("   -> [GRAPH]: Generating topological degree centralities for internal networks (Directors)...")
             directors_df = self.spark.read.parquet(str(dir_path))
             dir_features = self.compute_bipartite_features(directors_df, "director")
             final_df = final_df.join(dir_features, on="tconst", how="left")
             
         if writ_path.exists():
+            logger.info("   -> [SYNERGY]: Calculating combinatorial topological collaborations for internal networks (Writers)...")
             writers_df = self.spark.read.parquet(str(writ_path))
             writ_features = self.compute_bipartite_features(writers_df, "writer")
             collab_features = self.compute_collaborative_weight(writers_df)
@@ -259,6 +261,7 @@ class GraphFeatureExtractor:
                                
         # Apply massive external structural fetch. 
         # WARNING: In massive production tables, limit API mappings or pre-cache.
+        logger.info("   -> [REST API HYDRATION]: Ping-ponging external TMDB networks! (Warning: Large datasets will trigger significant REST rate delays spanning multiple minutes)")
         final_df = final_df.withColumn("tmdb_struct", fetch_tmdb_api(F.col("tconst")))
         
         final_df = final_df.select(
@@ -273,7 +276,9 @@ class GraphFeatureExtractor:
         ).drop("tmdb_struct")
         
         output_path = str(config.OUTPUT_DIR / "parquet" / "featured_graph.parquet")
+        logger.info(f"   -> [DAG EXECUTION]: Transmitting structural parameters to the executing JVM clusters. Flushing matrices into Parquet persistence vectors at: {output_path}...")
         final_df.write.mode("overwrite").parquet(output_path)
+        logger.info("   -> [GRAPH COMPLETE]: Featured Graph Master Matrix successfully serialized.")
 
 if __name__ == "__main__":
     extractor = GraphFeatureExtractor()

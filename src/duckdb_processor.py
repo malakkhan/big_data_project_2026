@@ -69,6 +69,9 @@ class DuckDBFeatureEngineer:
         if mad_val is None or mad_val == 0:
              return table_name
              
+        mad_val = float(mad_val)
+        median_val = float(median_val)
+        
         threshold = multiplier * constant * mad_val
         lower_bound = median_val - threshold
         upper_bound = median_val + threshold
@@ -114,12 +117,13 @@ class DuckDBFeatureEngineer:
                 
         return df
 
-    def run(self):
+    def run(self, is_inference=False):
         """
         Drives DuckDB outlier isolation and ML dimensionality logic end-to-end.
 
         Args:
-            None
+            is_inference (bool): Flag to strictly bypass outlier filtration 
+                                 ensuring no inference rows are permanently deleted.
 
         Returns:
             None
@@ -128,9 +132,12 @@ class DuckDBFeatureEngineer:
         
         self.con.execute(f"CREATE TABLE movies AS SELECT * FROM read_parquet('{input_parquet}')")
         
-        current_table = self.apply_mad_filter("movies", "runtimeMinutes", config.MAD_THRESHOLD_MULTIPLIER)
-        current_table = self.apply_mad_filter(current_table, "numVotes", config.MAD_THRESHOLD_MULTIPLIER)
-        
+        if not is_inference:
+            current_table = self.apply_mad_filter("movies", "runtimeMinutes", config.MAD_THRESHOLD_MULTIPLIER)
+            current_table = self.apply_mad_filter(current_table, "numVotes", config.MAD_THRESHOLD_MULTIPLIER)
+        else:
+            current_table = "movies"
+            
         result_df = self.con.execute(f"SELECT * FROM {current_table}").fetchdf()
         
         result_df = self.apply_tfidf_svd(result_df, ["primaryTitle", "originalTitle"], n_components=5)

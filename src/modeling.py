@@ -20,7 +20,7 @@ import xgboost as xgb
 import optuna
 import matplotlib.pyplot as plt
 from pathlib import Path
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.metrics import (
     roc_auc_score, roc_curve, confusion_matrix, accuracy_score, 
     precision_score, recall_score, ConfusionMatrixDisplay
@@ -71,7 +71,12 @@ class XGBoostModeler:
         drop_cols = ["tconst", "primaryTitle", "originalTitle", "synthetic_index"]
         feature_cols = [c for c in df.columns if c not in drop_cols and c != "label"]
         
-        X = df[feature_cols]
+        X = df[feature_cols].copy()
+        
+        # XGBoost explicitly requires unstructured schema tensors to be categorically mapped
+        for col in X.select_dtypes(include=['object']).columns:
+            X[col] = X[col].fillna("Unknown").astype('category')
+            
         y = df["label"]
         return X, y
 
@@ -186,15 +191,20 @@ class XGBoostModeler:
         oof_y_true = []
         oof_y_probs = []
         
-        for train_idx, val_idx in skf.split(X, y):
-            X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
-            X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
+        for train_idx, test_idx in skf.split(X, y):
+            X_train_full, y_train_full = X.iloc[train_idx], y.iloc[train_idx]
+            X_test, y_test = X.iloc[test_idx], y.iloc[test_idx]
             
-            model = xgb.XGBClassifier(**param, early_stopping_rounds=20)
+            # Protect testing purity! Sub-split the training set strictly for early stopping evaluation
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_train_full, y_train_full, test_size=0.15, stratify=y_train_full, random_state=42
+            )
+            
+            model = xgb.XGBClassifier(**param, early_stopping_rounds=20, enable_categorical=True)
             model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
             
-            preds = model.predict_proba(X_val)[:, 1]
-            oof_y_true.extend(y_val)
+            preds = model.predict_proba(X_test)[:, 1]
+            oof_y_true.extend(y_test)
             oof_y_probs.extend(preds)
             
         final_auc = roc_auc_score(oof_y_true, oof_y_probs)
@@ -239,7 +249,7 @@ class XGBoostModeler:
             'random_state': 42,
             **self.best_params
         }
-        self.final_model = xgb.XGBClassifier(**final_params)
+        self.final_model = xgb.XGBClassifier(**final_params, enable_categorical=True)
         self.final_model.fit(X, y) 
         
         model_path = config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_xgboost_best.joblib"
@@ -249,6 +259,7 @@ class XGBoostModeler:
         pd.Series(X.columns).to_json(feature_cols_path, orient="records")
         
         logger.info(f"Final Model mapped to {model_path}")
+        return study.best_value
 
 if __name__ == "__main__":
     modeler = XGBoostModeler()

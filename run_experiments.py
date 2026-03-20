@@ -22,7 +22,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("GlobalExperimentRunner")
 
-def run_experiments():
+def run_experiments(disable_imputation=False):
     """
     Executes a comprehensive grid search across macro pipeline parameters.
     
@@ -48,6 +48,9 @@ def run_experiments():
     
     logger.info(f"Initialized Global Experiment Runner. Testing {len(combinations)} parameter topologies.")
     
+    best_overall_auc = 0.0
+    best_overall_config = None
+    
     for idx, (mad, epochs, bs, lr) in enumerate(combinations):
         logger.info("="*60)
         logger.info(f"🚀 RUNNING EXPERIMENT BLOCK {idx+1}/{len(combinations)}")
@@ -69,17 +72,36 @@ def run_experiments():
         duckdb_processor.run()
         
         # 2. Imputation Phase
-        logger.info("-> Executing Neural Imputation")
-        imputer = DeepImputer()
-        imputer.run()
+        if disable_imputation:
+            logger.info("-> Neural Imputation DISABLED via CLI arg. Bridging DuckDB structures straight to Model vectors...")
+            import shutil
+            shutil.copy(config.OUTPUT_DIR / "parquet" / "duckdb_features.parquet", config.OUTPUT_DIR / "parquet" / "imputed_features.parquet")
+        else:
+            logger.info("-> Executing Neural Imputation")
+            imputer = DeepImputer()
+            imputer.run()
         
         # 3. XGBoost & Optuna Bayesian Phase 
         # (Optuna will internally save ROC curves into `experiment_results`)
         logger.info("-> Executing XGBoost Search Space")
         modeler = XGBoostModeler(experiment_prefix=macro_prefix)
-        modeler.run()
+        current_auc = modeler.run()
         
+        if current_auc is not None and current_auc > best_overall_auc:
+            best_overall_auc = current_auc
+            best_overall_config = {'MAD': mad, 'Epochs': epochs, 'BatchSize': bs, 'LR': lr}
+            
+    logger.info("="*60)
+    logger.info("🏆 GLOBAL EXPERIMENTATION SUPREME CONFIGURATION 🏆")
+    logger.info(f"Winning Configuration: {best_overall_config}")
+    logger.info(f"Peak ROC-AUC Score: {best_overall_auc:.4f}")
+    logger.info("="*60)
     logger.info("🎉 All Global Experiments Concluded Successfully!")
 
 if __name__ == "__main__":
-    run_experiments()
+    import argparse
+    parser = argparse.ArgumentParser(description="Run IMDB Global Experiments")
+    parser.add_argument("--disable-imputation", action="store_true", help="Skip the DeepImputation Module and bypass ML-fill gaps.")
+    args = parser.parse_args()
+    
+    run_experiments(disable_imputation=args.disable_imputation)
