@@ -179,7 +179,7 @@ def run_inference(targets, disable_imputation):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="IMDB Pipeline Inference Predictor")
     parser.add_argument("--test_files", nargs="+", default=["validation_hidden.csv", "test_hidden.csv"])
-    parser.add_argument("--disable-imputation", action="store_true")
+    parser.add_argument("--enable-imputation", action="store_true")
     
     args = parser.parse_args()
-    run_inference(args.test_files, args.disable_imputation)
+    run_inference(args.test_files, disable_imputation=not args.enable_imputation)

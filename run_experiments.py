@@ -205,7 +205,7 @@ def run_experiments(disable_imputation=False):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run IMDB Global Experiments")
-    parser.add_argument("--disable-imputation", action="store_true", help="Skip the DeepImputation Module.")
+    parser.add_argument("--enable-imputation", action="store_true", help="Enable the DeepImputation Module (disabled by default).")
     args = parser.parse_args()
     
-    run_experiments(disable_imputation=args.disable_imputation)
+    run_experiments(disable_imputation=not args.enable_imputation)
