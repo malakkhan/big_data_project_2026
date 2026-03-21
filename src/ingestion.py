@@ -591,20 +591,20 @@ class PySparkIngestor:
         if Path(directing_path).exists():
             directors_df = self.read_json_relational(directing_path, role="director")
             directors_df.write.mode("overwrite").parquet(
-                str(config.OUTPUT_DIR / "parquet" / "directing.parquet")
+                str(config.PARQUET_DIR / "directing.parquet")
             )
 
         if Path(writing_path).exists():
             writers_df = self.read_json_relational(writing_path, role="writer")
             writers_df.write.mode("overwrite").parquet(
-                str(config.OUTPUT_DIR / "parquet" / "writing.parquet")
+                str(config.PARQUET_DIR / "writing.parquet")
             )
 
         # DataFrames are lazily evaluated; the write action triggers the full
         # DAG execution. Checking truthiness on a DataFrame is not meaningful —
         # guard on the path pattern instead if conditional writes are needed.
         movies_df.write.mode("overwrite").parquet(
-            str(config.OUTPUT_DIR / "parquet" / "movies_cleaned.parquet")
+            str(config.PARQUET_DIR / "movies_cleaned.parquet")
         )
 
         logger.info("Ingestion complete. Files exported to Parquet.")

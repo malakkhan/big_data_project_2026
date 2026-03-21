@@ -15,6 +15,42 @@ The pipeline is divided into six decoupled phases, ensuring scalability and main
 7.  **Global Experimentation Engine:** In-memory grid-search evaluator looping through massive hyperparameters combinations. Generates explicit ROC curves, Confusion Matrices, and performance statistics securely across configurations. (Responsible script: `experiment_runner.py`)
 8.  **Unseen Inference Engine:** End-to-end evaluation pipeline securely predicting unseen testing arrays without corrupting metrics via artifact deletions, exporting strict logical `True`/`False` text files natively. (Responsible script: `inference.py`)
 
+## XGBoost Feature Schema
+The pipeline explicitly isolates unstructured data and identifiers, mapping the following exactly 25 features into the `XGBClassifier`:
+
+**Base IMDb Features:**
+1. `runtimeMinutes` (Numeric)
+2. `numVotes` (Numeric)
+3. `startYear` (Categorical)
+4. `endYear` (Categorical)
+
+**Network / Graph Centrality Features:**
+5. `director_avg_centrality` (Numeric)
+6. `director_max_centrality` (Numeric)
+7. `director_count` (Numeric)
+8. `writer_avg_centrality` (Numeric)
+9. `writer_max_centrality` (Numeric)
+10. `writer_count` (Numeric)
+11. `writer_writer_max_collab_weight` (Numeric)
+12. `writer_director_max_collab_weight` (Numeric)
+
+**TMDB External Features:**
+13. `tmdb_popularity` (Numeric)
+14. `tmdb_vote_average` (Numeric)
+15. `tmdb_budget` (Numeric)
+16. `tmdb_revenue` (Numeric)
+17. `tmdb_runtime` (Numeric)
+18. `tmdb_primary_genre` (Categorical)
+19. `tmdb_production_company` (Categorical)
+20. `tmdb_success` (Boolean)
+
+**SVD Dimensionality Reduction (Text Embeddings):**
+21. `tmdb_primary_genre_svd_0` (Numeric)
+22. `tmdb_primary_genre_svd_1` (Numeric)
+23. `tmdb_primary_genre_svd_2` (Numeric)
+24. `tmdb_primary_genre_svd_3` (Numeric)
+25. `tmdb_primary_genre_svd_4` (Numeric)
+
 ## Directory Structure;  
 ```text
 big_data_project_2026/

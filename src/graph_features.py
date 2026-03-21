@@ -623,12 +623,12 @@ class GraphFeatureExtractor:
             tmdb_fetched_at                   — UTC timestamp of fetch attempt
         """
         moviesDf = self.spark.read.parquet(
-            str(config.OUTPUT_DIR / "parquet" / "movies_cleaned.parquet")
+            str(config.PARQUET_DIR / "movies_cleaned.parquet")
         )
 
-        dirPath  = config.OUTPUT_DIR / "parquet" / "directing.parquet"
-        writPath = config.OUTPUT_DIR / "parquet" / "writing.parquet"
-        tmdbPath = config.OUTPUT_DIR / "parquet" / "tmdb.parquet"
+        dirPath  = config.PARQUET_DIR / "directing.parquet"
+        writPath = config.PARQUET_DIR / "writing.parquet"
+        tmdbPath = config.PARQUET_DIR / "tmdb.parquet"
 
         # -------------------------------------------------------------------
         # Stage 1 — TMDB fetch (driver-side, no Spark jobs)
@@ -704,7 +704,7 @@ class GraphFeatureExtractor:
         # titles for which the API call failed or returned no match.
         finalDf = finalDf.join(tmdbDf, on="tconst", how="left")
 
-        outputPath = str(config.OUTPUT_DIR / "parquet" / "featured_graph.parquet")
+        outputPath = str(config.PARQUET_DIR / "featured_graph.parquet")
         logger.info(f"   -> [WRITE]: Writing featured graph matrix to {outputPath}.")
         finalDf.write.mode("overwrite").parquet(outputPath)
         logger.info("   -> [COMPLETE]: Featured graph matrix written successfully.")
