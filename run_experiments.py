@@ -50,6 +50,7 @@ def run_experiments(disable_imputation=False):
     
     best_overall_auc = 0.0
     best_overall_config = None
+    best_macro_prefix = None
     
     for idx, (mad, epochs, bs, lr) in enumerate(combinations):
         logger.info("="*60)
@@ -90,13 +91,31 @@ def run_experiments(disable_imputation=False):
         if current_auc is not None and current_auc > best_overall_auc:
             best_overall_auc = current_auc
             best_overall_config = {'MAD': mad, 'Epochs': epochs, 'BatchSize': bs, 'LR': lr}
+            best_macro_prefix = macro_prefix
             
     logger.info("="*60)
     logger.info("🏆 GLOBAL EXPERIMENTATION SUPREME CONFIGURATION 🏆")
     logger.info(f"Winning Configuration: {best_overall_config}")
     logger.info(f"Peak ROC-AUC Score: {best_overall_auc:.4f}")
     logger.info("="*60)
-    logger.info("🎉 All Global Experiments Concluded Successfully!")
+    
+    import shutil
+    import json
+    winner_model = config.OUTPUT_DIR / "models" / f"{best_macro_prefix}_xgboost_best.joblib"
+    winner_schema = config.OUTPUT_DIR / "models" / f"{best_macro_prefix}_feature_schema.json"
+    winner_maps = config.OUTPUT_DIR / "models" / f"{best_macro_prefix}_categorical_maps.json"
+    
+    if winner_model.exists():
+        shutil.copy(winner_model, config.OUTPUT_DIR / "models" / "SUPREME_WINNER_MODEL.joblib")
+    if winner_schema.exists():
+        shutil.copy(winner_schema, config.OUTPUT_DIR / "models" / "SUPREME_WINNER_SCHEMA.json")
+    if winner_maps.exists():
+        shutil.copy(winner_maps, config.OUTPUT_DIR / "models" / "SUPREME_WINNER_MAPS.json")
+        
+    with open(config.OUTPUT_DIR / "models" / "SUPREME_WINNER_CONFIG.json", "w") as f:
+        json.dump(best_overall_config, f)
+        
+    logger.info("🎉 All Global Experiments Concluded Successfully! The winning model is explicitly tagged as 'SUPREME_WINNER_MODEL.joblib'!")
 
 if __name__ == "__main__":
     import argparse

@@ -33,28 +33,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger("InferenceEngine")
 
-def run_inference(targets, mad, epochs, bs, lr, disable_imputation):
+def run_inference(targets, disable_imputation):
+    import json
+    winner_config_path = config.OUTPUT_DIR / "models" / "SUPREME_WINNER_CONFIG.json"
+    if not winner_config_path.exists():
+        logger.error("FATAL: SUPREME_WINNER_CONFIG.json not found! You must successfully complete `run_experiments.py` first.")
+        sys.exit(1)
+        
+    with open(winner_config_path, "r") as f:
+        winner_config = json.load(f)
+        
+    mad = winner_config.get("MAD", 3.0)
+    epochs = winner_config.get("Epochs", 10)
+    bs = winner_config.get("BatchSize", 128)
+    lr = winner_config.get("LR", 0.001)
+    
     for target in targets:
         logger.info(f"=========== PROCESSING EVALUATION SET: {target} ===========")
         
-        if disable_imputation and (epochs is None or bs is None or lr is None):
-            import glob
-            search_prefix = str(config.OUTPUT_DIR / "models" / f"exp_mad{mad}_*_xgboost_best.joblib")
-            found_models = glob.glob(search_prefix)
-            if not found_models:
-                logger.error(f"FATAL: No models found matching {search_prefix}! Have you executed `run_experiments`?")
-                sys.exit(1)
-            model_path = Path(found_models[0])
-            macro_prefix = model_path.name.replace("_xgboost_best.joblib", "")
-            logger.info(f"Imputation disabled. Automatically resolved model: {model_path.name}")
-        else:
-            # Prefix mapping config to Optuna joblib targets
-            macro_prefix = f"exp_mad{mad}_ep{epochs}_bs{bs}_lr{lr}"
-            model_path = config.OUTPUT_DIR / "models" / f"{macro_prefix}_xgboost_best.joblib"
-            
-            if not model_path.exists():
-                logger.error(f"FATAL: Champion Model memory {model_path} not found! Have you executed `run_experiments` using these parameters?")
-                sys.exit(1)
+        macro_prefix = "SUPREME_WINNER"
+        model_path = config.OUTPUT_DIR / "models" / "SUPREME_WINNER_MODEL.joblib"
+        
+        if not model_path.exists():
+            logger.error(f"FATAL: Champion Model memory {model_path} not found! Have you executed `run_experiments`?")
+            sys.exit(1)
             
         # Phase 1: Pure PySpark Ingestion (Dynamic Binding)
         logger.info(f"Phase 1: Passing Source '{target}' into Distributed PySpark Ingestion...")
@@ -154,16 +156,8 @@ def run_inference(targets, mad, epochs, bs, lr, disable_imputation):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="IMDB Pipeline Unseen Inference Predictor")
     parser.add_argument("--test_files", nargs="+", default=["validation_hidden.csv", "test_hidden.csv"], help="List of file names bridging dynamic test predictions.")
-    parser.add_argument("--mad", type=float, required=True, help="Multiplying thresholds (e.g. 3.0)")
-    parser.add_argument("--epochs", type=int, help="DataWig Deep Neural Epoch configurations")
-    parser.add_argument("--bs", type=int, help="DataWig Deep Neural batch sizing")
-    parser.add_argument("--lr", type=float, help="DataWig Deep Neural learning scales")
     parser.add_argument("--disable-imputation", action="store_true", help="Bypass deep neural imputation logic")
     
     args = parser.parse_args()
-    
-    if not args.disable_imputation:
-        if args.epochs is None or args.bs is None or args.lr is None:
-            parser.error("--epochs, --bs, and --lr are required unless --disable-imputation is set")
             
-    run_inference(args.test_files, args.mad, args.epochs, args.bs, args.lr, args.disable_imputation)
+    run_inference(args.test_files, args.disable_imputation)
