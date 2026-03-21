@@ -169,7 +169,7 @@ def run_experiments(disable_imputation=False):
         id_cols = ["tconst", "primaryTitle", "originalTitle"]
         id_data = df[[c for c in id_cols if c in df.columns]].copy()
         
-        drop_cols = ["tconst", "synthetic_index", "primaryTitle", "originalTitle", "C1"]
+        drop_cols = ["tconst", "synthetic_index", "primaryTitle", "originalTitle", "C1", "tmdb_success"]
         feature_cols = [c for c in df.columns if c not in drop_cols and c != "label"]
         
         X = df[feature_cols].copy()

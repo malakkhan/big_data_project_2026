@@ -1,10 +1,10 @@
 """
-TMDB API Enrichment & Genre Encoding Module.
+TMDB API Enrichment & Categorical Normalization Module.
 
 Fetches external metadata from The Movie Database (TMDB) API, joins it
-onto the cleaned movie Parquet, coalesces runtime data, and applies
-fingerprint-keyed categorical encoding via LabelEncoder for genre and
-original language.
+onto the cleaned movie Parquet, coalesces runtime data, and normalizes
+categorical columns (genre, language, country) via fingerprint keying.
+XGBoost's native categorical support handles these directly.
 
 Design:
     TMDBFetcher runs entirely on the driver in a sequential Python loop.
@@ -283,7 +283,7 @@ class TMDBFetcher:
 
 
 # ---------------------------------------------------------------------------
-# Genre fingerprint keying + LabelEncoder
+# Fingerprint keying + categorical normalization
 # ---------------------------------------------------------------------------
 
 def fingerprint_key(value: str) -> str:
@@ -366,11 +366,11 @@ def normalize_categorical(
 
 class TMDBEnrichment:
     """
-    Orchestrates TMDB API fetch, runtime coalesce, and genre encoding.
+    Orchestrates TMDB API fetch, runtime coalesce, and categorical normalization.
 
     Reads cleaned_data.parquet, fetches TMDB metadata (or uses cached),
     joins it onto the movie DataFrame, coalesces tmdb_runtime into
-    runtimeMinutes, and applies genre fingerprint keying + LabelEncoder.
+    runtimeMinutes, and normalizes categorical columns via fingerprint keying.
 
     Writes the enriched DataFrame to enriched_features.parquet for
     downstream graph feature computation.
@@ -390,7 +390,7 @@ class TMDBEnrichment:
 
         Args:
             input_parquet: Name of the input parquet file in PARQUET_DIR.
-            is_inference:  If True, load fitted LabelEncoder instead of fitting.
+            is_inference:  If True, load saved vocabulary instead of fitting.
             tmdb_label:    Optional label for per-target TMDB caching (e.g. "validation_hidden").
         """
         moviesDf = self.spark.read.parquet(

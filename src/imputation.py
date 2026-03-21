@@ -154,8 +154,8 @@ class DeepImputer:
             ("mlp", model)
         ])
         
-        pipeline.fit(train_df, train_df[target_col])
-        predicted_values = pipeline.predict(predict_df)
+        pipeline.fit(train_df[input_cols], train_df[target_col])
+        predicted_values = pipeline.predict(predict_df[input_cols])
         
         # Prevent aggressive Pandas PyArrow strict casting failures (e.g., float regressions into Int32 blocks)
         predicted_series = pd.Series(predicted_values, index=predict_df.index)
