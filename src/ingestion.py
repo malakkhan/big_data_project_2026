@@ -41,6 +41,7 @@ import glob
 import logging
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 from pyspark.sql import SparkSession, DataFrame
 import pyspark.sql.functions as F
@@ -363,12 +364,12 @@ class PySparkIngestor:
         pipeline (PipelineMode): Active pipeline mode.
     """
 
-    def __init__(self, pipeline: PipelineMode = "general"):
+    def __init__(self, pipeline: PipelineMode = "general", spark: SparkSession = None):
         if pipeline not in ("general", "imdb"):
             raise ValueError(f"Unknown pipeline mode '{pipeline}'. Expected 'general' or 'imdb'.")
         self.pipeline = pipeline
 
-        self.spark = SparkSession.builder \
+        self.spark = spark or SparkSession.builder \
             .appName(config.SPARK_APP_NAME) \
             .master(config.SPARK_MASTER) \
             .config("spark.driver.memory", "4g") \
@@ -574,13 +575,20 @@ class PySparkIngestor:
         # columnar transfer from Pandas to JVM memory where possible.
         return self.spark.createDataFrame(pdf)
 
-    def run(self, target_pattern: str = "train-*.csv") -> None:
+    def run(self, target_pattern: str = "train-*.csv") -> DataFrame:
         """
         Orchestrates ingestion of all heterogeneous source files and writes
-        cleaned outputs to Parquet.
+        crew relation Parquets.
+
+        The movie DataFrame is returned in-memory (not written to Parquet)
+        so that downstream phases can continue without an unnecessary
+        write-then-read round-trip.
 
         Args:
             target_pattern: Filename wildcard identifying the main CSV tables.
+
+        Returns:
+            Cleaned Spark DataFrame of the main CSV table.
         """
         csv_path       = str(config.DATA_DIR / target_pattern)
         directing_path = str(config.DATA_DIR / "directing.json")
@@ -600,16 +608,120 @@ class PySparkIngestor:
                 str(config.PARQUET_DIR / "writing.parquet")
             )
 
-        # DataFrames are lazily evaluated; the write action triggers the full
-        # DAG execution. Checking truthiness on a DataFrame is not meaningful —
-        # guard on the path pattern instead if conditional writes are needed.
-        movies_df.write.mode("overwrite").parquet(
-            str(config.PARQUET_DIR / "movies_cleaned.parquet")
+        logger.info("Ingestion complete. Files exported to Parquet.")
+        return movies_df
+
+    # ------------------------------------------------------------------
+    # MAD outlier filter (Spark-native, fully distributed)
+    # ------------------------------------------------------------------
+
+    def apply_mad_clamp_spark(
+        self,
+        df:         DataFrame,
+        column:     str,
+        multiplier: float = 3.0,
+        constant:   float = 1.4826,
+    ) -> DataFrame:
+        """
+        Winsorise (clamp) extreme outliers using the Hampel X84 / MAD criterion.
+
+        Values beyond ±(multiplier × constant × MAD) from the median are
+        clamped to the boundary rather than dropped, preserving all rows.
+        Implemented entirely in Spark — no driver-side materialisation.
+        NULL values are left untouched.
+
+        Args:
+            df:         Input Spark DataFrame.
+            column:     Name of the numeric column to clamp.
+            multiplier: Scaled-MAD units beyond the median.
+            constant:   Consistency constant (1.4826 for normal distributions).
+
+        Returns:
+            Spark DataFrame with outlier values clamped.
+        """
+        if column not in df.columns:
+            logger.warning("MAD clamp skipped -- column '%s' not found", column)
+            return df
+
+        # Compute median using Spark's percentile_approx (exact at 10K accuracy)
+        stats = df.select(
+            F.percentile_approx(F.col(column), 0.5, 10000).alias("median"),
+            F.count(F.col(column)).alias("n"),
+        ).first()
+
+        median_val = stats["median"]
+        n_non_null = stats["n"]
+
+        if median_val is None or n_non_null < 2:
+            logger.warning("MAD clamp skipped for '%s' -- insufficient non-null values", column)
+            return df
+
+        # MAD = median(|x - median|)
+        mad_val = df.select(
+            F.percentile_approx(F.abs(F.col(column) - F.lit(median_val)), 0.5, 10000).alias("mad")
+        ).first()["mad"]
+
+        if mad_val is None or mad_val == 0:
+            logger.warning("MAD clamp skipped for '%s' -- MAD is 0 (constant column)", column)
+            return df
+
+        threshold   = multiplier * constant * mad_val
+        lower_bound = median_val - threshold
+        upper_bound = median_val + threshold
+
+        # Count how many values will be clamped (for logging)
+        n_clamped = df.filter(
+            F.col(column).isNotNull() & ~F.col(column).between(lower_bound, upper_bound)
+        ).count()
+
+        # Clamp: cap values at the bounds instead of dropping rows
+        df = df.withColumn(
+            column,
+            F.when(F.col(column).isNull(), F.col(column))
+             .when(F.col(column) < lower_bound, F.lit(int(lower_bound)))
+             .when(F.col(column) > upper_bound, F.lit(int(upper_bound)))
+             .otherwise(F.col(column))
         )
 
-        logger.info("Ingestion complete. Files exported to Parquet.")
+        logger.info(
+            "MAD clamp '%s': clamped %d values  (median=%.3f  MAD=%.3f  "
+            "bounds=[%.3f, %.3f])",
+            column, n_clamped, median_val, mad_val, lower_bound, upper_bound,
+        )
+        return df
+
+    def run_with_cleaning(self, target_pattern: str = "train-*.csv") -> None:
+        """
+        Full Phase 1: ingest via PySpark, then apply MAD outlier
+        removal on all integer-typed columns and write cleaned_data.parquet.
+
+        Entirely Spark-native — no .toPandas() materialisation required.
+
+        Args:
+            target_pattern: Filename wildcard for the main CSV tables.
+        """
+        movies_df = self.run(target_pattern=target_pattern)
+
+        logger.info("--- Post-ingestion MAD cleaning ---")
+
+        # Identify integer columns via Spark schema (no collection needed)
+        from pyspark.sql.types import IntegerType, LongType
+        int_cols = [
+            field.name for field in movies_df.schema.fields
+            if isinstance(field.dataType, (IntegerType, LongType))
+        ]
+        logger.info("Integer columns eligible for MAD filtering: %s", int_cols)
+
+        for col in int_cols:
+            movies_df = self.apply_mad_clamp_spark(
+                movies_df, col, multiplier=config.MAD_THRESHOLD_MULTIPLIER
+            )
+
+        output_path = str(config.PARQUET_DIR / "cleaned_data.parquet")
+        movies_df.write.mode("overwrite").parquet(output_path)
+        logger.info("Wrote cleaned_data.parquet -> %s", output_path)
 
 
 if __name__ == "__main__":
     ingestor = PySparkIngestor(pipeline="imdb")
-    ingestor.run()
+    ingestor.run_with_cleaning()

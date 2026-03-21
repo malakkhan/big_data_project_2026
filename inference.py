@@ -1,29 +1,39 @@
 """
 Inference & Prediction Pipeline.
 
-Seamlessly loads structurally unseen data matrices through the entire
-pipeline (Ingestion -> Graph Mapping -> DuckDB -> Imputer) and calculates
-probabilities via the champion XGBoost Bayesian Optuna Model.
+Loads structurally unseen data through the pipeline
+(Ingestion -> TMDB Enrichment + Genre -> Graph Features -> Imputer) 
+and predicts via the champion XGBoost model tagged as SUPREME_WINNER.
+
+Design:
+    A single SparkSession is created and shared across all pipeline phases
+    to avoid redundant JVM overhead. Legacy Parquet format is enabled so
+    Spark-written Parquet can be read by downstream pd.read_parquet().
 """
 
 import sys
 import logging
 import argparse
 import shutil
+import json
+from datetime import datetime
 import joblib
+import numpy as np
 import pandas as pd
 from pathlib import Path
+
+from pyspark.sql import SparkSession
 
 from src import config
 
 # Override Parquet directory globally for inference executions to prevent
-# overwriting the foundational `featured_graph.parquet` training matrices!
+# overwriting the foundational training matrices!
 config.PARQUET_DIR = config.OUTPUT_DIR / "inference_parquet"
 config.PARQUET_DIR.mkdir(parents=True, exist_ok=True)
 
 from src.ingestion import PySparkIngestor
+from src.tmdb_enrichment import TMDBEnrichment
 from src.graph_features import GraphFeatureExtractor
-from src.duckdb_processor import DuckDBFeatureEngineer
 from src.imputation import DeepImputer
 
 logging.basicConfig(
@@ -33,69 +43,93 @@ logging.basicConfig(
 )
 logger = logging.getLogger("InferenceEngine")
 
+def _build_spark() -> SparkSession:
+    """Shared SparkSession for inference with legacy Parquet format."""
+    return SparkSession.builder \
+        .appName(config.SPARK_APP_NAME) \
+        .master(config.SPARK_MASTER) \
+        .config("spark.driver.memory", "4g") \
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
+        .config("spark.sql.ansi.enabled", "false") \
+        .config("spark.sql.parquet.writeLegacyFormat", "true") \
+        .getOrCreate()
+
 def run_inference(targets, disable_imputation):
-    import json
     winner_config_path = config.OUTPUT_DIR / "models" / "SUPREME_WINNER_CONFIG.json"
     if not winner_config_path.exists():
-        logger.error("FATAL: SUPREME_WINNER_CONFIG.json not found! You must successfully complete `run_experiments.py` first.")
+        logger.error("FATAL: SUPREME_WINNER_CONFIG.json not found! Run run_experiments.py first.")
         sys.exit(1)
         
     with open(winner_config_path, "r") as f:
         winner_config = json.load(f)
-        
-    mad = winner_config.get("MAD", 3.0)
-    epochs = winner_config.get("Epochs", 10)
-    bs = winner_config.get("BatchSize", 128)
-    lr = winner_config.get("LR", 0.001)
+    
+    macro = winner_config.get("macro_config", winner_config)
+    epochs = macro.get("Epochs", 10)
+    bs = macro.get("BatchSize", 128)
+    lr = macro.get("LR", 0.001)
+    
+    model_path = config.OUTPUT_DIR / "models" / "SUPREME_WINNER_MODEL.joblib"
+    if not model_path.exists():
+        logger.error(f"FATAL: Champion Model {model_path} not found! Run run_experiments.py first.")
+        sys.exit(1)
+    
+    # Single shared SparkSession for all phases
+    spark = _build_spark()
     
     for target in targets:
         logger.info(f"=========== PROCESSING EVALUATION SET: {target} ===========")
         
-        macro_prefix = "SUPREME_WINNER"
-        model_path = config.OUTPUT_DIR / "models" / "SUPREME_WINNER_MODEL.joblib"
+        # Derive a label for per-target TMDB caching (e.g. "validation_hidden")
+        tmdb_label = Path(target).stem  # "validation_hidden" or "test_hidden"
+
+        # Phase 1: PySpark Ingestion (no MAD cleaning for inference)
+        logger.info(f"Phase 1: PySpark Ingestion for '{target}'...")
+        ingestor = PySparkIngestor(spark=spark)
+        movies_spark_df = ingestor.run(target_pattern=target)
         
-        if not model_path.exists():
-            logger.error(f"FATAL: Champion Model memory {model_path} not found! Have you executed `run_experiments`?")
-            sys.exit(1)
-            
-        # Phase 1: Pure PySpark Ingestion (Dynamic Binding)
-        logger.info(f"Phase 1: Passing Source '{target}' into Distributed PySpark Ingestion...")
-        ingestor = PySparkIngestor()
-        ingestor.run(target_pattern=target)
+        # Write cleaned_data.parquet via Spark (legacy format, no .toPandas())
+        cleaned_path = config.PARQUET_DIR / "cleaned_data.parquet"
+        movies_spark_df.write.mode("overwrite").parquet(str(cleaned_path))
         
-        # Phase 2: PySpark Topological Graphs and TMDB API Hooks
-        logger.info(f"Phase 2: Hydrating '{target}' via Graph API and Collaborator Arrays...")
-        graph_extractor = GraphFeatureExtractor()
+        # Phase 2: TMDB Enrichment + Genre Encoding (inference mode)
+        # Each target set caches its TMDB data as tmdb_{label}.parquet
+        logger.info(f"Phase 2: TMDB Enrichment + Genre Encoding for '{target}'...")
+        enricher = TMDBEnrichment(spark=spark)
+        enricher.run(is_inference=True, tmdb_label=tmdb_label)
+        
+        # Phase 3: Graph Features
+        logger.info(f"Phase 3: Graph Feature Computation for '{target}'...")
+        graph_extractor = GraphFeatureExtractor(spark=spark)
         graph_extractor.run()
         
-        # Phase 3: DuckDB Subsetting
-        logger.info(f"Phase 3: Bypassing DuckDB Outlier Removal for Unseen Inference; Generating Latent Lexical TF-IDF matrices...")
-        duckdb_processor = DuckDBFeatureEngineer()
-        duckdb_processor.run(is_inference=True)
-        
-        # Phase 4: Imputation Restorations
+        # Phase 4: Imputation
         if disable_imputation:
-            logger.info("Phase 4: Skipping Scikit-Learn Multilayer Perceptron Imputation Pipeline...")
-            shutil.copy(config.PARQUET_DIR / "duckdb_features.parquet", config.PARQUET_DIR / "imputed_features.parquet")
+            logger.info("Phase 4: Skipping Imputation...")
+            enriched_path = config.PARQUET_DIR / "enriched_features.parquet"
+            imputed_path = config.PARQUET_DIR / "imputed_features.parquet"
+            # Clean up any stale version (may be a file or Spark directory)
+            if imputed_path.is_dir():
+                shutil.rmtree(imputed_path)
+            elif imputed_path.exists():
+                imputed_path.unlink()
+            shutil.copy(enriched_path, imputed_path)
         else:
-            logger.info("Phase 4: Bridging Unseen Rows through Neural Vector Imputer...")
+            logger.info("Phase 4: Neural Imputation...")
             config.IMPUTER_EPOCHS = epochs
             config.IMPUTER_BATCH_SIZE = bs
             config.IMPUTER_LEARNING_RATE = lr
             imputer = DeepImputer()
             imputer.run()
             
-        # Phase 5: XGBoost Native Inferences
-        logger.info(f"Phase 5: Loading XGBoost Optuna Artifact '{macro_prefix}' into Memory...")
+        # Phase 5: XGBoost Prediction
+        logger.info("Phase 5: Loading SUPREME_WINNER model...")
         model = joblib.load(model_path)
         
         df = pd.read_parquet(config.PARQUET_DIR / "imputed_features.parquet")
         
-        # Mirroring production alignments
         drop_cols = ["tconst", "primaryTitle", "originalTitle", "synthetic_index", "label"]
         feature_cols = [c for c in df.columns if c not in drop_cols]
         
-        # Ensuring features passed match model strictly
         for expected_col in model.feature_names_in_:
             if expected_col not in feature_cols:
                 df[expected_col] = 0 
@@ -103,9 +137,7 @@ def run_inference(targets, disable_imputation):
                 
         X_test = df[model.feature_names_in_].copy()
         
-        # Strictly map untamed test strings into exact Pandas categorical frameworks corresponding to XGBoost enable_categorical=True
-        import json
-        maps_path = config.OUTPUT_DIR / "models" / f"{macro_prefix}_categorical_maps.json"
+        maps_path = config.OUTPUT_DIR / "models" / "SUPREME_WINNER_MAPS.json"
         if maps_path.exists():
             with open(maps_path, 'r') as f:
                 categorical_maps = json.load(f)
@@ -118,46 +150,36 @@ def run_inference(targets, disable_imputation):
             for col in X_test.select_dtypes(include=['object']).columns:
                 X_test[col] = X_test[col].fillna("Unknown").astype('category')
             
-        logger.info(f"Triggering massive probability regressions on '{target}'!")
+        logger.info(f"Predicting on '{target}'...")
         preds = model.predict_proba(X_test)[:, 1]
         
-        # Format explicitly for submission constraints 
-        import numpy as np
-        
-        # Output DataFrame with shuffled PySpark mapping
         output_df = pd.DataFrame({
             "tconst": df["tconst"],
             "predicted_label": (preds >= 0.5).astype(int)
         })
         
-        # Graders strictly require identical row counts and identical sequence ordering!
-        # PySpark hashing inherently shuffles rows and drops disjoint JSON metadata IDs.
-        # We must Left-Join our XGBoost vectors directly back onto the chronological source file.
         original_csv = pd.read_csv(config.DATA_DIR / target)
-        
-        # Bind regressions sequentially
         aligned_df = pd.merge(original_csv[['tconst']], output_df, on='tconst', how='left')
-        
-        # If any rows were destroyed by PySpark/DuckDB parsing engines, default their blank inferences to False
         aligned_df['predicted_label'] = aligned_df['predicted_label'].fillna(0)
         
-        # Convert binary ints to exactly "True" or "False" strings line by line
         boolean_predictions = np.where(aligned_df['predicted_label'] == 1, "True", "False")
         
-        out_path = config.OUTPUT_DIR / f"{Path(target).stem}_predictions.txt"
+        submissions_dir = config.OUTPUT_DIR / "submissions"
+        submissions_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = submissions_dir / f"{Path(target).stem}_predictions_{timestamp}.txt"
         with open(out_path, "w") as f:
             for val in boolean_predictions:
                 f.write(f"{val}\n")
                 
-        logger.info("======================================================")
-        logger.info(f"✅ Inferences Computed for {target}! Predictions saved natively to: {out_path}")
-        logger.info("======================================================")
+        logger.info("=" * 60)
+        logger.info(f"Inferences saved to: {out_path}")
+        logger.info("=" * 60)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="IMDB Pipeline Unseen Inference Predictor")
-    parser.add_argument("--test_files", nargs="+", default=["validation_hidden.csv", "test_hidden.csv"], help="List of file names bridging dynamic test predictions.")
-    parser.add_argument("--disable-imputation", action="store_true", help="Bypass deep neural imputation logic")
+    parser = argparse.ArgumentParser(description="IMDB Pipeline Inference Predictor")
+    parser.add_argument("--test_files", nargs="+", default=["validation_hidden.csv", "test_hidden.csv"])
+    parser.add_argument("--disable-imputation", action="store_true")
     
     args = parser.parse_args()
-            
     run_inference(args.test_files, args.disable_imputation)

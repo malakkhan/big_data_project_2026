@@ -1,1 +1,15 @@
-{"MAD": 4.0, "Epochs": 10, "BatchSize": 128, "LR": 0.005}
+{
+    "macro_config": {
+        "Epochs": 10,
+        "BatchSize": 128,
+        "LR": 0.005
+    },
+    "best_roc_auc": 0.990066,
+    "optimized_xgboost_params": {
+        "n_estimators": 174,
+        "learning_rate": 0.12740989644355497,
+        "max_depth": 9,
+        "reg_alpha": 5.8035582881745,
+        "reg_lambda": 5.349672275068592
+    }
+}
