@@ -444,9 +444,8 @@ class GraphFeatureExtractor:
         credited on — a proxy for industry experience. The per-person degree
         is aggregated back to the movie level:
 
-            {prefix}_avg_centrality — mean experience of the crew on this film.
-            {prefix}_max_centrality — experience of the most prolific crew member.
-            {prefix}_count          — number of credited people in this role.
+            {prefix}_avg_centrality — average experience scale of the team.
+            {prefix}_count          — raw size of the credited crew block.
 
         Args:
             relationsDf: DataFrame with columns [tconst, nconst].
@@ -472,7 +471,6 @@ class GraphFeatureExtractor:
             .groupBy("tconst") \
             .agg(
                 F.avg(f"{rolePrefix}_degree").alias(f"{rolePrefix}_avg_centrality"),
-                F.max(f"{rolePrefix}_degree").alias(f"{rolePrefix}_max_centrality"),
                 F.count("nconst").alias(f"{rolePrefix}_count"),
             )
 
@@ -604,20 +602,17 @@ class GraphFeatureExtractor:
             and the result is written to featured_graph.parquet.
 
         Output schema (in addition to all columns from movies_cleaned.parquet):
-            director_avg_centrality           — avg director degree centrality
-            director_max_centrality           — max director degree centrality
-            director_count                    — number of credited directors
-            writer_avg_centrality             — avg writer degree centrality
-            writer_max_centrality             — max writer degree centrality
-            writer_count                      — number of credited writers
+            director_avg_centrality           — average director degree centrality
+            director_count                    — size of director bloc
+            writer_avg_centrality             — average writer degree centrality
+            writer_count                      — size of writer bloc
             writer_writer_max_collab_weight   — max writer-writer pair frequency
             writer_director_max_collab_weight — max writer-director pair frequency
             tmdb_popularity                   — TMDB popularity score
             tmdb_vote_average                 — TMDB audience vote average
             tmdb_budget                       — production budget in USD
             tmdb_revenue                      — box office revenue in USD
-            tmdb_runtime                      — runtime in minutes (TMDB source)
-            tmdb_primary_genre                — first-listed genre from TMDB
+            tmdb_primary_genre                — nominal primary catalog genre from TMDB
             tmdb_production_company           — first-listed production company
             tmdb_success                      — True if TMDB fetch succeeded
             tmdb_fetched_at                   — UTC timestamp of fetch attempt
@@ -703,6 +698,12 @@ class GraphFeatureExtractor:
         # Left join: all movies are preserved. tmdb_success=False rows represent
         # titles for which the API call failed or returned no match.
         finalDf = finalDf.join(tmdbDf, on="tconst", how="left")
+
+        logger.info("   -> [TMDB]: Coalescing tmdb_runtime into runtimeMinutes.")
+        finalDf = finalDf.withColumn(
+            "runtimeMinutes",
+            F.coalesce(F.col("runtimeMinutes"), F.col("tmdb_runtime"))
+        ).drop("tmdb_runtime")
 
         outputPath = str(config.PARQUET_DIR / "featured_graph.parquet")
         logger.info(f"   -> [WRITE]: Writing featured graph matrix to {outputPath}.")

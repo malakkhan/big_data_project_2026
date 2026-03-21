@@ -16,7 +16,7 @@ The pipeline is divided into six decoupled phases, ensuring scalability and main
 8.  **Unseen Inference Engine:** End-to-end evaluation pipeline securely predicting unseen testing arrays without corrupting metrics via artifact deletions, exporting strict logical `True`/`False` text files natively. (Responsible script: `inference.py`)
 
 ## XGBoost Feature Schema
-The pipeline explicitly isolates unstructured data and identifiers, mapping the following exactly 25 features into the `XGBClassifier`:
+The pipeline explicitly isolates unstructured data and identifiers, mapping the following exactly 22 features into the `XGBClassifier`:
 
 **Base IMDb Features:**
 1. `runtimeMinutes` (Numeric)
@@ -26,36 +26,34 @@ The pipeline explicitly isolates unstructured data and identifiers, mapping the 
 
 **Network / Graph Centrality Features:**
 5. `director_avg_centrality` (Numeric)
-6. `director_max_centrality` (Numeric)
-7. `director_count` (Numeric)
-8. `writer_avg_centrality` (Numeric)
-9. `writer_max_centrality` (Numeric)
-10. `writer_count` (Numeric)
-11. `writer_writer_max_collab_weight` (Numeric)
-12. `writer_director_max_collab_weight` (Numeric)
+6. `director_count` (Numeric)
+7. `writer_avg_centrality` (Numeric)
+8. `writer_count` (Numeric)
+9. `writer_writer_max_collab_weight` (Numeric)
+10. `writer_director_max_collab_weight` (Numeric)
 
 **TMDB External Features:**
-13. `tmdb_popularity` (Numeric)
-14. `tmdb_vote_average` (Numeric)
-15. `tmdb_budget` (Numeric)
-16. `tmdb_revenue` (Numeric)
-17. `tmdb_runtime` (Numeric)
-18. `tmdb_primary_genre` (Categorical)
-19. `tmdb_production_company` (Categorical)
-20. `tmdb_success` (Boolean)
+11. `tmdb_popularity` (Numeric)
+12. `tmdb_vote_average` (Numeric)
+13. `tmdb_budget` (Numeric)
+14. `tmdb_revenue` (Numeric)
+15. `tmdb_primary_genre` (Categorical)
+16. `tmdb_production_company` (Categorical)
+17. `tmdb_success` (Boolean)
 
 **SVD Dimensionality Reduction (Text Embeddings):**
-21. `tmdb_primary_genre_svd_0` (Numeric)
-22. `tmdb_primary_genre_svd_1` (Numeric)
-23. `tmdb_primary_genre_svd_2` (Numeric)
-24. `tmdb_primary_genre_svd_3` (Numeric)
-25. `tmdb_primary_genre_svd_4` (Numeric)
+18. `tmdb_primary_genre_svd_0` (Numeric)
+19. `tmdb_primary_genre_svd_1` (Numeric)
+20. `tmdb_primary_genre_svd_2` (Numeric)
+21. `tmdb_primary_genre_svd_3` (Numeric)
+22. `tmdb_primary_genre_svd_4` (Numeric)
 
 ## Directory Structure;  
 ```text
 big_data_project_2026/
 ├── requirements.txt         # Core dependencies (PySpark, DuckDB, XGBoost, Optuna)
 ├── prepare_data.py          # Phase 1 & 2: PySpark Ingestion + Graph + TMDB API
+├── analyze_covariance.py    # Generates a Spearman Collinearity heatmap across XGBoost matrices
 ├── run_experiments.py       # Phase 3-5: Grid Search over DuckDB, Imputation, & Models
 ├── inference.py             # Unseen evaluation scripting (test/validation outputs)
 ├── src/
@@ -92,7 +90,14 @@ big_data_project_2026/
     python prepare_data.py
     ```
 
-3.  **Run the Global Experimentation Suite:** 
+3.  **Evaluate Feature Collinearity (Optional):** 
+    Executes a standalone Pandas/Seaborn correlation evaluator against the `output/parquet` matrices. Flags dangerously collinear signals (>= 0.75) and explicitly generates a Spearman Rank heatmap at `/output/analysis/feature_correlation_heatmap.png`.
+
+    ```bash
+    python analyze_covariance.py
+    ```
+
+4.  **Run the Global Experimentation Suite:** 
     Executes deep macroscopic hyperparameter grid searches decoupled from the intensive structural parses above. Tests multiple `duckdb` configurations and imputer schemas independently.
     
     *Command-line configurations:*
@@ -108,12 +113,8 @@ big_data_project_2026/
 
     *Command-line configurations:*
     - `--test_files` (str): Sequential list of target filenames to evaluate (defaults to `validation_hidden.csv test_hidden.csv`).
-    - `--mad` (float): The final MAD threshold established by the winning configuration.
-    - `--epochs` (int): Number of executing Imputer epochs initialized.
-    - `--bs` (int): Scale of Imputer batch sizes.
-    - `--lr` (float): Neural Learning Rate factor.
     - `--disable-imputation`: Boolean flag to skip neural imputation structures dynamically (must strictly replicate the winning configuration).
 
     ```bash
-    python inference.py --mad 3.0 --epochs 10 --bs 128 --lr 0.001 --disable-imputation
+    python inference.py --disable-imputation
     ```
