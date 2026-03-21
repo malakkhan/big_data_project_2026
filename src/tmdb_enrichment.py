@@ -309,6 +309,7 @@ def normalize_categorical(
     df:           pd.DataFrame,
     column:       str,
     is_inference: bool = False,
+    min_frequency: int = 0,
 ) -> pd.DataFrame:
     """
     Normalise a categorical column via fingerprint keying.
@@ -317,6 +318,8 @@ def normalize_categorical(
     handles unordered categories optimally via subset splits.
 
     Training: saves the known class vocabulary to disk for inference safety.
+             If min_frequency > 0, values appearing fewer than min_frequency
+             times are collapsed to 'unknown' before saving the vocabulary.
     Inference: loads the vocabulary and remaps unseen values to 'unknown'.
     """
     vocab_dir = config.OUTPUT_DIR / "models"
@@ -332,6 +335,17 @@ def normalize_categorical(
     df[column] = df[column].replace("", "unknown")
 
     if not is_inference:
+        # Collapse rare categories below the frequency threshold
+        if min_frequency > 0:
+            freq = df[column].value_counts()
+            rare_values = freq[freq < min_frequency].index.tolist()
+            if rare_values:
+                logger.info("Collapsing %d rare value(s) in '%s' (freq < %d) to 'unknown'",
+                            len(rare_values), column, min_frequency)
+                df[column] = df[column].where(
+                    ~df[column].isin(rare_values), other="unknown"
+                )
+
         known_classes = sorted(df[column].unique().tolist())
         if "unknown" not in known_classes:
             known_classes.append("unknown")
@@ -438,13 +452,29 @@ class TMDBEnrichment:
         enriched_df = normalize_categorical(enriched_df, column="tmdb_primary_genre", is_inference=is_inference)
         enriched_df = normalize_categorical(enriched_df, column="tmdb_original_language", is_inference=is_inference)
         enriched_df = normalize_categorical(enriched_df, column="tmdb_origin_country", is_inference=is_inference)
+        enriched_df = normalize_categorical(enriched_df, column="tmdb_production_company", is_inference=is_inference, min_frequency=5)
+
+        # --- Interaction features ---
+        logger.info("   -> [INTERACT]: Engineering interaction features...")
+        # Budget-to-revenue ratio (0 when revenue is 0 to avoid inf)
+        if "tmdb_budget" in enriched_df.columns and "tmdb_revenue" in enriched_df.columns:
+            enriched_df["budget_revenue_ratio"] = np.where(
+                enriched_df["tmdb_revenue"] > 0,
+                enriched_df["tmdb_budget"] / enriched_df["tmdb_revenue"],
+                0.0,
+            )
+        # Votes × popularity composite signal
+        if "numVotes" in enriched_df.columns and "tmdb_popularity" in enriched_df.columns:
+            enriched_df["votes_x_popularity"] = (
+                enriched_df["numVotes"].fillna(0) * enriched_df["tmdb_popularity"].fillna(0)
+            )
 
         # Write final result for downstream compatibility.
         outputPath = config.PARQUET_DIR / "tmdb_enriched.parquet"
         if outputPath.is_dir():
             shutil.rmtree(outputPath)
         enriched_df.to_parquet(str(outputPath), index=False)
-        logger.info("   -> [ENCODE]: Categorical encoding complete. Matrix: %d rows x %d cols.", *enriched_df.shape)
+        logger.info("   -> [ENCODE]: Enrichment complete. Matrix: %d rows x %d cols.", *enriched_df.shape)
 
 
 if __name__ == "__main__":

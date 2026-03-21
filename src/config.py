@@ -65,7 +65,7 @@ SPARK_APP_NAME = "IMDB_Pipeline"
 SPARK_MASTER = "local[*]"
 
 # Outlier Detection (MAD) Configurations (Mutable by global experiments)
-MAD_THRESHOLD_MULTIPLIER = 3.0
+MAD_THRESHOLD_MULTIPLIER = 4.0
 
 # Imputer Modeling Configurations (Mutable by global experiments)
 IMPUTER_EPOCHS = 5
@@ -76,7 +76,7 @@ IMPUTER_LEARNING_RATE = 0.001
 XGB_PARAM_BOUNDS = {
     'max_depth': [3, 10],
     'learning_rate': [0.01, 0.3],
-    'n_estimators': [50, 500],
-    'reg_alpha': [0, 10], # L1 penalty
-    'reg_lambda': [0, 10] # L2 penalty
+    'n_estimators': [50, 600],
+    'reg_alpha': [0, 40], # L1 penalty
+    'reg_lambda': [0, 40] # L2 penalty
 }
