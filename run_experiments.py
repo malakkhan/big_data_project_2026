@@ -150,67 +150,53 @@ def run_experiments(disable_imputation=False):
     logger.info(f"  reg_lambda    = {supreme_config['optimized_xgboost_params']['reg_lambda']}")
     logger.info("=" * 60)
     
-    # --- Misclassification analysis on training data ---
-    logger.info("Generating misclassification report for the winning model...")
+    # --- Misclassification analysis using out-of-fold CV predictions ---
+    logger.info("Generating misclassification report from out-of-fold predictions...")
     try:
-        import joblib
         import pandas as pd
         import numpy as np
         
-        model = joblib.load(config.OUTPUT_DIR / "models" / "SUPREME_WINNER_MODEL.joblib")
-        
-        # Read the feature matrix (same one the model was trained on)
-        input_parquet = config.PARQUET_DIR / "imputed_features.parquet"
-        if not input_parquet.exists():
-            input_parquet = config.PARQUET_DIR / "enriched_features.parquet"
-        
-        df = pd.read_parquet(input_parquet)
-        
-        id_cols = ["tconst", "primaryTitle", "originalTitle"]
-        id_data = df[[c for c in id_cols if c in df.columns]].copy()
-        
-        drop_cols = ["tconst", "synthetic_index", "primaryTitle", "originalTitle", "C1", "tmdb_success"]
-        feature_cols = [c for c in df.columns if c not in drop_cols and c != "label"]
-        
-        X = df[feature_cols].copy()
-        for col in X.select_dtypes(include=['object']).columns:
-            X[col] = X[col].fillna("Unknown").astype('category')
-        
-        y_true = df["label"].astype(int)
-        
-        # Align features to model's expected schema
-        for col in model.feature_names_in_:
-            if col not in X.columns:
-                X[col] = 0
-        X = X[model.feature_names_in_]
-        
-        y_probs = model.predict_proba(X)[:, 1]
-        y_pred = (y_probs >= 0.5).astype(int)
-        
-        misclassified_mask = y_pred != y_true
-        n_wrong = misclassified_mask.sum()
-        n_total = len(y_true)
-        
-        logger.info(f"Misclassified: {n_wrong}/{n_total} ({100 * n_wrong / n_total:.2f}%)")
-        
-        if n_wrong > 0:
-            misclassified_df = id_data.loc[misclassified_mask].copy()
-            misclassified_df["true_label"] = y_true.values[misclassified_mask]
-            misclassified_df["predicted_prob"] = y_probs[misclassified_mask]
-            misclassified_df["predicted_label"] = y_pred[misclassified_mask]
+        oof_path = config.OUTPUT_DIR / "models" / f"{best_macro_prefix}_oof_predictions.parquet"
+        if not oof_path.exists():
+            logger.warning(f"OOF predictions not found at {oof_path}. Skipping misclassification report.")
+        else:
+            oof_df = pd.read_parquet(oof_path)
             
-            # Include key features for error analysis
-            key_features = [c for c in ["runtimeMinutes", "numVotes", "tmdb_popularity",
-                                        "tmdb_vote_average", "tmdb_primary_genre",
-                                        "tmdb_original_language", "tmdb_origin_country",
-                                        "director_avg_centrality", "writer_avg_centrality"]
-                           if c in df.columns]
-            for col in key_features:
-                misclassified_df[col] = df.loc[misclassified_mask, col].values
+            # Read the full feature matrix to get identifiers and key features
+            input_parquet = config.PARQUET_DIR / "imputed_features.parquet"
+            if not input_parquet.exists():
+                input_parquet = config.PARQUET_DIR / "enriched_features.parquet"
+            df = pd.read_parquet(input_parquet)
             
-            out_csv = config.OUTPUT_DIR / "experiment_results" / "misclassified_examples.csv"
-            misclassified_df.to_csv(out_csv, index=False)
-            logger.info(f"Misclassified examples saved to {out_csv}")
+            # Compute misclassification from OOF predictions
+            oof_df["predicted_label"] = (oof_df["predicted_prob"] >= 0.5).astype(int)
+            misclassified_mask = oof_df["predicted_label"] != oof_df["true_label"]
+            
+            n_wrong = misclassified_mask.sum()
+            n_total = len(oof_df)
+            logger.info(f"Out-of-fold misclassified: {n_wrong}/{n_total} ({100 * n_wrong / n_total:.2f}%)")
+            
+            if n_wrong > 0:
+                # Map OOF row indices back to the original DataFrame
+                mis_indices = oof_df.loc[misclassified_mask, "row_index"].astype(int).values
+                
+                id_cols = ["tconst", "primaryTitle", "originalTitle"]
+                misclassified_df = df.iloc[mis_indices][[c for c in id_cols if c in df.columns]].copy()
+                misclassified_df["true_label"] = oof_df.loc[misclassified_mask, "true_label"].values
+                misclassified_df["predicted_prob"] = oof_df.loc[misclassified_mask, "predicted_prob"].values
+                misclassified_df["predicted_label"] = oof_df.loc[misclassified_mask, "predicted_label"].values
+                
+                key_features = [c for c in ["runtimeMinutes", "numVotes", "tmdb_popularity",
+                                            "tmdb_vote_average", "tmdb_primary_genre",
+                                            "tmdb_original_language", "tmdb_origin_country",
+                                            "director_avg_centrality", "writer_avg_centrality"]
+                               if c in df.columns]
+                for col in key_features:
+                    misclassified_df[col] = df.iloc[mis_indices][col].values
+                
+                out_csv = config.OUTPUT_DIR / "experiment_results" / "misclassified_examples.csv"
+                misclassified_df.to_csv(out_csv, index=False)
+                logger.info(f"Misclassified examples saved to {out_csv}")
     except Exception as e:
         logger.warning(f"Could not generate misclassification report: {e}")
         

@@ -52,6 +52,8 @@ class XGBoostModeler:
         self.experiment_prefix = experiment_prefix
         self.best_params = None
         self.final_model = None
+        self._best_oof_auc = 0.0
+        self._best_oof_data = None  # (indices, y_true, y_probs) from best CV trial
 
     def prep_data(self):
         """
@@ -208,6 +210,7 @@ class XGBoostModeler:
         
         skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=42) 
         
+        oof_indices = []
         oof_y_true = []
         oof_y_probs = []
         
@@ -224,10 +227,20 @@ class XGBoostModeler:
             model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
             
             preds = model.predict_proba(X_test)[:, 1]
+            oof_indices.extend(test_idx)
             oof_y_true.extend(y_test)
             oof_y_probs.extend(preds)
             
         final_auc = roc_auc_score(oof_y_true, oof_y_probs)
+        
+        # Track the best trial's out-of-fold predictions for honest misclassification reporting
+        if final_auc > self._best_oof_auc:
+            self._best_oof_auc = final_auc
+            self._best_oof_data = (
+                np.array(oof_indices),
+                np.array(oof_y_true),
+                np.array(oof_y_probs),
+            )
         
         # Extract native Information Gain measurements from the culminated K-Fold predictor
         f_list = list(X.columns)
@@ -293,6 +306,19 @@ class XGBoostModeler:
         categories_dict = {col: list(X[col].cat.categories) for col in X.select_dtypes(include=['category']).columns}
         with open(config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_categorical_maps.json", "w") as f:
             json.dump(categories_dict, f)
+        
+        # Persist out-of-fold predictions from the best CV trial for honest
+        # misclassification reporting (not re-predicting on training data).
+        if self._best_oof_data is not None:
+            oof_indices, oof_true, oof_probs = self._best_oof_data
+            oof_df = pd.DataFrame({
+                "row_index": oof_indices,
+                "true_label": oof_true,
+                "predicted_prob": oof_probs,
+            })
+            oof_path = config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_oof_predictions.parquet"
+            oof_df.to_parquet(oof_path, index=False)
+            logger.info(f"Out-of-fold predictions saved to {oof_path}")
         
         logger.info(f"Final Model mapped to {model_path}")
         return study.best_value
