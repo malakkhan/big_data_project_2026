@@ -3,7 +3,8 @@ TMDB API Enrichment & Genre Encoding Module.
 
 Fetches external metadata from The Movie Database (TMDB) API, joins it
 onto the cleaned movie Parquet, coalesces runtime data, and applies
-fingerprint-keyed genre encoding via LabelEncoder.
+fingerprint-keyed categorical encoding via LabelEncoder for genre and
+original language.
 
 Design:
     TMDBFetcher runs entirely on the driver in a sequential Python loop.
@@ -88,6 +89,8 @@ TMDB_PARQUET_SCHEMA = StructType([
     StructField("tmdb_revenue",            DoubleType(),    True),
     StructField("tmdb_runtime",            IntegerType(),   True),
     StructField("tmdb_primary_genre",      StringType(),    True),
+    StructField("tmdb_original_language",  StringType(),    True),
+    StructField("tmdb_origin_country",     StringType(),    True),
     StructField("tmdb_production_company", StringType(),    True),
     StructField("tmdb_success",            BooleanType(),   False),
     StructField("tmdb_fetched_at",         TimestampType(), False),
@@ -192,7 +195,8 @@ class TMDBFetcher:
         nullRow = {
             "tconst": tconst, "tmdb_popularity": None, "tmdb_vote_average": None,
             "tmdb_budget": None, "tmdb_revenue": None, "tmdb_runtime": None,
-            "tmdb_primary_genre": None, "tmdb_production_company": None,
+            "tmdb_primary_genre": None, "tmdb_original_language": None,
+            "tmdb_origin_country": None, "tmdb_production_company": None,
             "tmdb_success": False, "tmdb_fetched_at": fetchedAt,
         }
 
@@ -232,6 +236,8 @@ class TMDBFetcher:
             "tmdb_revenue":            float(m.get("revenue")      or 0),
             "tmdb_runtime":            int(runtime) if runtime is not None else None,
             "tmdb_primary_genre":      genres[0]["name"]    if genres    else None,
+            "tmdb_original_language":  m.get("original_language"),
+            "tmdb_origin_country":     (m.get("origin_country") or [None])[0],
             "tmdb_production_company": companies[0]["name"] if companies else None,
             "tmdb_success":            True,
             "tmdb_fetched_at":         fetchedAt,
@@ -299,13 +305,13 @@ def fingerprint_key(value: str) -> str:
     return " ".join(sorted(set(tokens)))
 
 
-def encode_genre(
+def encode_categorical(
     df:           pd.DataFrame,
-    column:       str  = "tmdb_primary_genre",
+    column:       str,
     is_inference: bool = False,
 ) -> pd.DataFrame:
     """
-    Normalise and ordinally encode a genre column.
+    Normalise and ordinally encode a categorical column.
 
     Training: fit a LabelEncoder, persist to disk.
     Inference: load the fitted encoder, map unseen labels to 'unknown'.
@@ -330,8 +336,8 @@ def encode_genre(
         if "unknown" not in encoder.classes_:
             encoder.classes_ = np.append(encoder.classes_, "unknown")
         joblib.dump(encoder, encoder_path)
-        logger.info("LabelEncoder fitted: %d genre classes -> saved to %s",
-                    len(encoder.classes_), encoder_path)
+        logger.info("LabelEncoder fitted: %d classes for '%s' -> saved to %s",
+                    len(encoder.classes_), column, encoder_path)
     else:
         if not encoder_path.exists():
             raise FileNotFoundError(
@@ -424,18 +430,20 @@ class TMDBEnrichment:
         # Drop audit columns not needed downstream
         moviesDf = moviesDf.drop("tmdb_fetched_at")
 
-        # --- Genre encoding (Pandas-side for sklearn LabelEncoder compatibility) ---
-        # Convert directly to Pandas from Spark for the small genre encoding step.
-        logger.info("   -> [GENRE]: Applying fingerprint keying + LabelEncoder...")
+        # --- Categorical encoding (Pandas-side for sklearn LabelEncoder compatibility) ---
+        # Convert directly to Pandas from Spark for the encoding step.
+        logger.info("   -> [ENCODE]: Applying fingerprint keying + LabelEncoder...")
         enriched_df = moviesDf.toPandas()
-        enriched_df = encode_genre(enriched_df, column="tmdb_primary_genre", is_inference=is_inference)
+        enriched_df = encode_categorical(enriched_df, column="tmdb_primary_genre", is_inference=is_inference)
+        enriched_df = encode_categorical(enriched_df, column="tmdb_original_language", is_inference=is_inference)
+        enriched_df = encode_categorical(enriched_df, column="tmdb_origin_country", is_inference=is_inference)
 
-        # Write final result via Spark (legacy format) for downstream compatibility.
+        # Write final result for downstream compatibility.
         outputPath = config.PARQUET_DIR / "tmdb_enriched.parquet"
         if outputPath.is_dir():
             shutil.rmtree(outputPath)
         enriched_df.to_parquet(str(outputPath), index=False)
-        logger.info("   -> [GENRE]: Genre encoding complete. Matrix: %d rows x %d cols.", *enriched_df.shape)
+        logger.info("   -> [ENCODE]: Categorical encoding complete. Matrix: %d rows x %d cols.", *enriched_df.shape)
 
 
 if __name__ == "__main__":

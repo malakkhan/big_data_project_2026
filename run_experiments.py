@@ -202,6 +202,7 @@ def run_experiments(disable_imputation=False):
             # Include key features for error analysis
             key_features = [c for c in ["runtimeMinutes", "numVotes", "tmdb_popularity",
                                         "tmdb_vote_average", "tmdb_primary_genre",
+                                        "tmdb_original_language", "tmdb_origin_country",
                                         "director_avg_centrality", "writer_avg_centrality"]
                            if c in df.columns]
             for col in key_features:

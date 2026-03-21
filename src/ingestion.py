@@ -458,7 +458,13 @@ class PySparkIngestor:
 
         # Drop rows where the last column still contains the header value —
         # these are duplicate header rows baked in by some export tools.
-        df = df.filter(F.col(adjusted_headers[-1]) != actual_headers[-1])
+        # IMPORTANT: Use `isNull() | (col != val)` because Spark's tri-valued
+        # logic would otherwise drop NULLs too (NULL != "numVotes" -> NULL -> filtered out).
+        last_col_name = adjusted_headers[-1]
+        last_header_val = actual_headers[-1]
+        df = df.filter(
+            F.col(last_col_name).isNull() | (F.col(last_col_name) != last_header_val)
+        )
 
         # -----------------------------------------------------------------------
         # Stage 2 — Null standardisation

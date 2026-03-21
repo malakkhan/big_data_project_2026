@@ -42,7 +42,7 @@ class DeepImputer:
         """
         self.numeric_features = ["startYear", "endYear", "tmdb_popularity", "tmdb_vote_average", "tmdb_budget", "tmdb_revenue"]
         self.text_features = ["tmdb_production_company"]
-        self.categorical_features = ["tmdb_primary_genre"]
+        self.categorical_features = ["tmdb_primary_genre", "tmdb_original_language", "tmdb_origin_country"]
 
     def build_feature_extractor(self, input_columns):
         """
