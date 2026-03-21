@@ -15,16 +15,6 @@ The pipeline is divided into cleanly separated phases with explicit Parquet chec
 7.  **Global Experimentation Engine:** Grid search evaluator across imputer hyperparameters. Tags the winning model as `SUPREME_WINNER_MODEL.joblib` with full Optuna-optimized params in `SUPREME_WINNER_CONFIG.json`. Generates a misclassification report (`misclassified_examples.csv`) for the winning model. (Script: `run_experiments.py`)
 8.  **Unseen Inference Engine:** End-to-end prediction pipeline with isolated Parquet outputs, per-target TMDB caching, and shared SparkSession. Timestamped submissions prevent overwrites. (Script: `inference.py`)
 
-## Scalability Design
-
-| Bottleneck | Solution |
-|---|---|
-| Redundant SparkSession creation | Single session created in `prepare_data.py`, passed to all modules |
-| `.toPandas()` in MAD filtering | Spark-native `percentile_approx` + `F.when` clamping |
-| Sequential TMDB API fetching | `ThreadPoolExecutor(10)` + `Semaphore`-based rate limiter (~10× speedup) |
-| Expensive self-joins in graph features | `repartition("tconst")` before joins to reduce shuffle |
-| PyArrow Parquet incompatibility | `writeLegacyFormat=true` for Spark writes; `.toPandas()` only at Spark→Pandas boundary |
-
 ## Parquet Checkpoint Flow
 ```
 Phase 1 (Ingestion + Cleaning)
