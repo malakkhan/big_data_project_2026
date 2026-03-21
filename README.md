@@ -50,7 +50,7 @@ Inference
 ```
 
 ## XGBoost Feature Schema
-The pipeline maps the following 20 features into the `XGBClassifier`:
+The pipeline maps the following 18 features into the `XGBClassifier`:
 
 **Base IMDb Features:**
 1. `runtimeMinutes` (Numeric — coalesced from IMDb + TMDB)
@@ -75,10 +75,8 @@ The pipeline maps the following 20 features into the `XGBClassifier`:
 16. `tmdb_original_language` (ISO 639-1 code → XGBoost native categorical)
 17. `tmdb_origin_country` (ISO 3166-1 code → XGBoost native categorical)
 18. `tmdb_production_company` (String → XGBoost native categorical)
-19. `tmdb_success` (Boolean — whether TMDB lookup succeeded)
 
-**Other:**
-20. *(synthetic_index column, if present in the source CSV)*
+> **Note:** `tmdb_success` and `synthetic_index` are metadata columns excluded from the feature matrix.
 
 ## Directory Structure
 ```text

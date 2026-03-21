@@ -127,7 +127,7 @@ def run_inference(targets, disable_imputation):
         
         df = pd.read_parquet(config.PARQUET_DIR / "imputed_features.parquet")
         
-        drop_cols = ["tconst", "primaryTitle", "originalTitle", "synthetic_index", "label"]
+        drop_cols = ["tconst", "primaryTitle", "originalTitle", "synthetic_index", "label", "tmdb_success"]
         feature_cols = [c for c in df.columns if c not in drop_cols]
         
         for expected_col in model.feature_names_in_:
