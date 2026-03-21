@@ -65,10 +65,10 @@ class XGBoostModeler:
                 X (pd.DataFrame): The feature matrix.
                 y (pd.Series): The target binary labels.
         """
-        input_parquet = config.OUTPUT_DIR / "parquet" / "imputed_features.parquet"
+        input_parquet = config.PARQUET_DIR / "imputed_features.parquet"
         df = pd.read_parquet(input_parquet)
         
-        drop_cols = ["tconst", "synthetic_index"]
+        drop_cols = ["tconst", "synthetic_index", "primaryTitle", "originalTitle", "tmdb_fetched_at", "C1"]
         feature_cols = [c for c in df.columns if c not in drop_cols and c != "label"]
         
         X = df[feature_cols].copy()
@@ -77,7 +77,7 @@ class XGBoostModeler:
         for col in X.select_dtypes(include=['object']).columns:
             X[col] = X[col].fillna("Unknown").astype('category')
             
-        y = df["label"]
+        y = df["label"].astype(int)
         return X, y
 
     def plot_and_save_artifacts(self, trial_number, y_true, y_probs, auc_score, params, feature_importances=None):
@@ -289,6 +289,10 @@ class XGBoostModeler:
         
         feature_cols_path = config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_feature_schema.json"
         pd.Series(X.columns).to_json(feature_cols_path, orient="records")
+        
+        categories_dict = {col: list(X[col].cat.categories) for col in X.select_dtypes(include=['category']).columns}
+        with open(config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_categorical_maps.json", "w") as f:
+            json.dump(categories_dict, f)
         
         logger.info(f"Final Model mapped to {model_path}")
         return study.best_value

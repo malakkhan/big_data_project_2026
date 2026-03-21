@@ -27,6 +27,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "output"
+PARQUET_DIR = OUTPUT_DIR / "parquet"
 
 def create_directories():
     """
@@ -39,7 +40,7 @@ def create_directories():
         None
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    (OUTPUT_DIR / "parquet").mkdir(exist_ok=True)
+    PARQUET_DIR.mkdir(exist_ok=True)
     (OUTPUT_DIR / "models").mkdir(exist_ok=True)
     (OUTPUT_DIR / "experiment_results").mkdir(exist_ok=True)
 

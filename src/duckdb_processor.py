@@ -85,7 +85,7 @@ class DuckDBFeatureEngineer:
         self.con.execute(filter_sql)
         return filtered_table
 
-    def apply_tfidf_svd(self, df: pd.DataFrame, text_columns, n_components=10):
+    def apply_tfidf_svd(self, df: pd.DataFrame, text_columns, n_components=10, is_inference=False):
         """
         Extracts complex latent structures from text using algebraic geometry (SVD).
 
@@ -100,17 +100,36 @@ class DuckDBFeatureEngineer:
         Returns:
             pd.DataFrame: Augmented matrix infused with compressed lexical signatures.
         """
+        import numpy as np
+        import joblib
+        from src import config
         for col in text_columns:
             if col not in df.columns:
                 continue
                 
             text_data = df[col].fillna("")
+            vectorizer_path = config.OUTPUT_DIR / "models" / f"{col}_vectorizer.joblib"
+            svd_path = config.OUTPUT_DIR / "models" / f"{col}_svd.joblib"
             
-            vectorizer = TfidfVectorizer(max_features=500, stop_words='english')
-            tfidf_matrix = vectorizer.fit_transform(text_data)
-            
-            svd = TruncatedSVD(n_components=n_components, random_state=42)
-            dense_embeddings = svd.fit_transform(tfidf_matrix)
+            if not is_inference:
+                vectorizer = TfidfVectorizer(max_features=500, stop_words='english')
+                tfidf_matrix = vectorizer.fit_transform(text_data)
+                
+                svd = TruncatedSVD(n_components=n_components, random_state=42)
+                dense_embeddings = svd.fit_transform(tfidf_matrix)
+                
+                config.OUTPUT_DIR.joinpath("models").mkdir(parents=True, exist_ok=True)
+                joblib.dump(vectorizer, vectorizer_path)
+                joblib.dump(svd, svd_path)
+            else:
+                try:
+                    vectorizer = joblib.load(vectorizer_path)
+                    svd = joblib.load(svd_path)
+                    tfidf_matrix = vectorizer.transform(text_data)
+                    dense_embeddings = svd.transform(tfidf_matrix)
+                except Exception as e:
+                    logger.warning(f"Failed to load SVD dependencies. Filling {col} with 0: {e}")
+                    dense_embeddings = np.zeros((len(df), n_components))
             
             for i in range(n_components):
                 df[f"{col}_svd_{i}"] = dense_embeddings[:, i]
@@ -128,7 +147,7 @@ class DuckDBFeatureEngineer:
         Returns:
             None
         """
-        input_parquet = str(config.OUTPUT_DIR / "parquet" / "featured_graph.parquet")
+        input_parquet = str(config.PARQUET_DIR / "featured_graph.parquet")
         
         self.con.execute(f"CREATE TABLE movies AS SELECT * FROM read_parquet('{input_parquet}')")
         
@@ -140,9 +159,9 @@ class DuckDBFeatureEngineer:
             
         result_df = self.con.execute(f"SELECT * FROM {current_table}").fetchdf()
         
-        result_df = self.apply_tfidf_svd(result_df, ["tmdb_primary_genre"], n_components=5)
+        result_df = self.apply_tfidf_svd(result_df, ["tmdb_primary_genre"], n_components=5, is_inference=is_inference)
         
-        output_path = str(config.OUTPUT_DIR / "parquet" / "duckdb_features.parquet")
+        output_path = str(config.PARQUET_DIR / "duckdb_features.parquet")
         result_df.to_parquet(output_path, index=False)
 
 if __name__ == "__main__":

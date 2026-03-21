@@ -170,7 +170,7 @@ class DriftMonitor:
             None
         """
         try:
-            train_features = pd.read_parquet(config.OUTPUT_DIR / "parquet" / "imputed_features.parquet")
+            train_features = pd.read_parquet(config.PARQUET_DIR / "imputed_features.parquet")
         except:
             logger.error("Imputed features not found. Run previous stages first.")
             return

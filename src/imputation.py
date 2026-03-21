@@ -178,7 +178,7 @@ class DeepImputer:
         Returns:
             None
         """
-        input_parquet = config.OUTPUT_DIR / "parquet" / "duckdb_features.parquet"
+        input_parquet = config.PARQUET_DIR / "duckdb_features.parquet"
         
         try:
             df = pd.read_parquet(input_parquet)
@@ -191,7 +191,7 @@ class DeepImputer:
             if tgt in df.columns:
                 df = self.impute_column(df, tgt)
                 
-        output_path = config.OUTPUT_DIR / "parquet" / "imputed_features.parquet"
+        output_path = config.PARQUET_DIR / "imputed_features.parquet"
         df.to_parquet(output_path, index=False)
 
 if __name__ == "__main__":

@@ -75,7 +75,7 @@ def run_experiments(disable_imputation=False):
         if disable_imputation:
             logger.info("-> Neural Imputation DISABLED via CLI arg. Bridging DuckDB structures straight to Model vectors...")
             import shutil
-            shutil.copy(config.OUTPUT_DIR / "parquet" / "duckdb_features.parquet", config.OUTPUT_DIR / "parquet" / "imputed_features.parquet")
+            shutil.copy(config.PARQUET_DIR / "duckdb_features.parquet", config.PARQUET_DIR / "imputed_features.parquet")
         else:
             logger.info("-> Executing Neural Imputation")
             imputer = DeepImputer()

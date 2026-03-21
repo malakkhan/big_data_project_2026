@@ -1,28 +1,55 @@
 {
     "metrics": {
-        "roc_auc": 0.9863638762048312,
-        "accuracy": 0.9466846634047579,
-        "precision": 0.9417022930431403,
-        "sensitivity": 0.9358825801467748,
-        "specificity": 0.9550629119233074
+        "roc_auc": 0.9874947958142495,
+        "accuracy": 0.9487092964400202,
+        "precision": 0.9409494403705133,
+        "sensitivity": 0.9416763229045964,
+        "specificity": 0.9541641701617735
     },
     "hyperparameters": {
         "objective": "binary:logistic",
         "eval_metric": "auc",
-        "n_estimators": 460,
-        "learning_rate": 0.030677815472767052,
-        "max_depth": 7,
-        "reg_alpha": 7.117965163465985,
-        "reg_lambda": 4.721734938818514,
+        "n_estimators": 244,
+        "learning_rate": 0.03761172117420731,
+        "max_depth": 3,
+        "reg_alpha": 7.041955140676057,
+        "reg_lambda": 5.900182649031269,
         "tree_method": "hist",
         "random_state": 42,
         "verbosity": 0,
         "n_jobs": -1
     },
     "confusion_matrix": {
-        "True_Positives": 2423,
-        "False_Positives": 150,
-        "True_Negatives": 3188,
-        "False_Negatives": 166
+        "True_Positives": 2438,
+        "False_Positives": 153,
+        "True_Negatives": 3185,
+        "False_Negatives": 151
+    },
+    "feature_importances_gain": {
+        "runtimeMinutes": 0.022707290947437286,
+        "numVotes": 0.01255355216562748,
+        "startYear": 0.037027161568403244,
+        "endYear": 0.0,
+        "director_avg_centrality": 0.004463331773877144,
+        "director_max_centrality": 0.0,
+        "director_count": 0.0033452550414949656,
+        "writer_avg_centrality": 0.015858527272939682,
+        "writer_max_centrality": 1.545694613014348e-05,
+        "writer_count": 0.0,
+        "writer_writer_max_collab_weight": 0.006218491122126579,
+        "writer_director_max_collab_weight": 0.0,
+        "tmdb_popularity": 0.03260042890906334,
+        "tmdb_vote_average": 0.6595351099967957,
+        "tmdb_budget": 0.019310999661684036,
+        "tmdb_revenue": 0.015611196868121624,
+        "tmdb_runtime": 0.02342206798493862,
+        "tmdb_primary_genre": 0.04009488970041275,
+        "tmdb_production_company": 0.005310626234859228,
+        "tmdb_success": 0.0,
+        "tmdb_primary_genre_svd_0": 0.013116907328367233,
+        "tmdb_primary_genre_svd_1": 0.05739331617951393,
+        "tmdb_primary_genre_svd_2": 0.008283973671495914,
+        "tmdb_primary_genre_svd_3": 0.0006394434021785855,
+        "tmdb_primary_genre_svd_4": 0.022491995245218277
     }
 }
