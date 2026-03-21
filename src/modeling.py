@@ -68,7 +68,7 @@ class XGBoostModeler:
         input_parquet = config.OUTPUT_DIR / "parquet" / "imputed_features.parquet"
         df = pd.read_parquet(input_parquet)
         
-        drop_cols = ["tconst", "primaryTitle", "originalTitle", "synthetic_index"]
+        drop_cols = ["tconst", "synthetic_index"]
         feature_cols = [c for c in df.columns if c not in drop_cols and c != "label"]
         
         X = df[feature_cols].copy()
@@ -80,21 +80,22 @@ class XGBoostModeler:
         y = df["label"]
         return X, y
 
-    def plot_and_save_artifacts(self, trial_number, y_true, y_probs, auc_score, params):
+    def plot_and_save_artifacts(self, trial_number, y_true, y_probs, auc_score, params, feature_importances=None):
         """
-        Calculates rigid binary metrics, plots ROC and Confusion Matrices, and persists them.
+        Generates and saves visual matrices and statistical outputs.
+
+        Creates an explicit ROC Curve, a normalized Confusion Matrix, and JSON serialization.
 
         Args:
-            trial_number (int): The current Optuna iteration.
-            y_true (np.ndarray): The ground truth binary labels.
-            y_probs (np.ndarray): The continuous probability scores.
-            auc_score (float): The calculated aggregate area-under-curve.
-            params (dict): The tree hyperparameters used.
-
-        Returns:
-            None
+            trial_number (int): Optuna iteration index.
+            y_true (np.array): Chronological truth labels.
+            y_probs (np.array): Raw continuous probabilistic outputs.
+            auc_score (float): Aggregate ROC-AUC score.
+            params (dict): Param configuration bindings.
+            feature_importances (dict): Optional dictionary mapping feature titles to Information Gain.
         """
         experiment_dir = config.OUTPUT_DIR / "experiment_results"
+        experiment_dir.mkdir(parents=True, exist_ok=True)
         trial_id = f"{self.experiment_prefix}_trial{trial_number}"
         
         y_pred = (y_probs >= 0.5).astype(int)
@@ -121,18 +122,37 @@ class XGBoostModeler:
             "specificity": float(spec)
         }
         
+        output_payload = {
+            "metrics": metrics,
+            "hyperparameters": params,
+            "confusion_matrix": {
+                "True_Positives": int(tp),
+                "False_Positives": int(fp),
+                "True_Negatives": int(tn),
+                "False_Negatives": int(fn)
+            }
+        }
+        
+        if feature_importances is not None:
+            output_payload["feature_importances_gain"] = feature_importances
+            
+            # Plot Feature Importance Bar Chart
+            plt.figure(figsize=(10, 8))
+            fi_df = pd.DataFrame(list(feature_importances.items()), columns=['Feature', 'Importance'])
+            # Sort bottom-up for horizontal bar charting, keeping the top 15
+            fi_df = fi_df.sort_values(by='Importance', ascending=True).tail(15)
+            
+            plt.barh(fi_df['Feature'], fi_df['Importance'], color='teal')
+            plt.xlabel('Information Gain')
+            plt.title(f'XGBoost Feature Importances (Top 15) - {trial_id}')
+            
+            plot_path_fi = experiment_dir / f"{trial_id}_feature_importance.png"
+            plt.savefig(plot_path_fi, bbox_inches='tight')
+            plt.close()
+            
         # Save JSON Stats & Parameters
         with open(experiment_dir / f"{trial_id}.json", "w") as f:
-            json.dump({
-                "metrics": metrics,
-                "hyperparameters": params,
-                "confusion_matrix": {
-                    "True_Positives": int(tp),
-                    "False_Positives": int(fp),
-                    "True_Negatives": int(tn),
-                    "False_Negatives": int(fn)
-                }
-            }, f, indent=4)
+            json.dump(output_payload, f, indent=4)
         
         # Plot ROC
         fpr, tpr, _ = roc_curve(y_true, y_probs)
@@ -209,7 +229,19 @@ class XGBoostModeler:
             
         final_auc = roc_auc_score(oof_y_true, oof_y_probs)
         
-        self.plot_and_save_artifacts(trial.number, np.array(oof_y_true), np.array(oof_y_probs), final_auc, param)
+        # Extract native Information Gain measurements from the culminated K-Fold predictor
+        f_list = list(X.columns)
+        importances = model.feature_importances_
+        fi_dict = {f_list[i]: float(importances[i]) for i in range(len(f_list))}
+        
+        self.plot_and_save_artifacts(
+            trial.number, 
+            np.array(oof_y_true), 
+            np.array(oof_y_probs), 
+            final_auc, 
+            param, 
+            feature_importances=fi_dict
+        )
             
         return final_auc
 

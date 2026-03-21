@@ -41,7 +41,7 @@ class DeepImputer:
         Maps out deterministic pipeline boundaries required for the Scikit wrappers.
         """
         self.numeric_features = ["startYear", "endYear", "tmdb_popularity", "tmdb_vote_average", "tmdb_budget", "tmdb_revenue", "tmdb_runtime"]
-        self.text_features = ["primaryTitle", "tmdb_production_company"]
+        self.text_features = ["tmdb_production_company"]
         self.categorical_features = ["tmdb_primary_genre"]
 
     def build_feature_extractor(self, input_columns):
@@ -185,7 +185,7 @@ class DeepImputer:
         except Exception as e:
             return
             
-        targets = ["runtimeMinutes", "numVotes", "originalTitle", "startYear"]
+        targets = ["runtimeMinutes", "numVotes", "startYear"]
         
         for tgt in targets:
             if tgt in df.columns:

@@ -38,24 +38,46 @@ big_data_project_2026/
 ```
 
 ## Getting Started
+
 1.  **Install Dependencies:**
     ```bash
     pip install -r requirements.txt
     ```
-3.  **Data Preparation (Run Once):** 
+
+2.  **Data Preparation (Run Once):** 
     Executes heavy Spark JVM loads and REST API fetch mechanisms. Generates permanent structural datasets in `/output/parquet`
+    
+    *Command-line configurations:*
+    - `--phase1`: Isolate execution to Phase 1 exclusively (PySpark Ingestion & JSON Flattening).
+    - `--phase2`: Isolate execution to Phase 2 exclusively (Graph Extraction & TMDB API Hydration).
+    - *(Passing no flags executes the entire architecture sequentially)*
+
     ```bash
     python prepare_data.py
     ```
-4.  **Run the Global Experimentation Suite:** 
+
+3.  **Run the Global Experimentation Suite:** 
     Executes deep macroscopic hyperparameter grid searches decoupled from the intensive structural parses above. Tests multiple `duckdb` configurations and imputer schemas independently.
+    
+    *Command-line configurations:*
+    - `--disable-imputation`: Bypass the DeepImputation module entirely, bridging DuckDB vectors linearly to XGBoost.
+
     ```bash
     python run_experiments.py
     ```
-    *All evaluation matrices, ROC plots, and statistical JSON sheets (`accuracy`, `precision`, `sensitivity`) will dynamically output directly into `/output/experiment_results/`!*
+    *All evaluation matrices, ROC plots, and statistical JSON sheets will dynamically output into `/output/experiment_results/`!*
 
-5.  **Execute the Inference Predictor:**
-    Takes the precise macroscopic combination that "won" the experiments suite and pipes pure unseen CSV data (e.g. `test_hidden.csv` and `validation_hidden.csv`) into the generated Optuna `.joblib` model. Outputs strictly formatted `True`/`False` text files natively per grader constraints.
+4.  **Execute the Inference Predictor:**
+    Takes the precise macroscopic combination that "won" the experiments suite and pipes pure unseen CSV testing arrays into the generated Optuna `.joblib` model. Outputs strictly formatted `True`/`False` text files natively per grader constraints.
+
+    *Command-line configurations:*
+    - `--test_files` (str): Sequential list of target filenames to evaluate (defaults to `validation_hidden.csv test_hidden.csv`).
+    - `--mad` (float): The final MAD threshold established by the winning configuration.
+    - `--epochs` (int): Number of executing Imputer epochs initialized.
+    - `--bs` (int): Scale of Imputer batch sizes.
+    - `--lr` (float): Neural Learning Rate factor.
+    - `--disable-imputation`: Boolean flag to skip neural imputation structures dynamically (must strictly replicate the winning configuration).
+
     ```bash
     python inference.py --mad 3.0 --epochs 10 --bs 128 --lr 0.001 --disable-imputation
     ```

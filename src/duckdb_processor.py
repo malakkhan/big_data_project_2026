@@ -140,7 +140,7 @@ class DuckDBFeatureEngineer:
             
         result_df = self.con.execute(f"SELECT * FROM {current_table}").fetchdf()
         
-        result_df = self.apply_tfidf_svd(result_df, ["primaryTitle", "originalTitle"], n_components=5)
+        result_df = self.apply_tfidf_svd(result_df, ["tmdb_primary_genre"], n_components=5)
         
         output_path = str(config.OUTPUT_DIR / "parquet" / "duckdb_features.parquet")
         result_df.to_parquet(output_path, index=False)

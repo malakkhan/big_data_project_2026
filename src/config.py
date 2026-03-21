@@ -55,6 +55,10 @@ TMDB_READ_TOKEN = (
     "vDnoiKdEz0"
 )
 
+# Programmatically broadcast hardcoded configs directly into global OS Environments
+os.environ["TMDB_API_KEY"] = TMDB_API_KEY
+os.environ["TMDB_READ_TOKEN"] = TMDB_READ_TOKEN
+
 # PySpark Configuration
 SPARK_APP_NAME = "IMDB_Pipeline"
 SPARK_MASTER = "local[*]"
