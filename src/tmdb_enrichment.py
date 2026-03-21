@@ -44,7 +44,7 @@ from pyspark.sql.types import (
     StructType, StructField,
     StringType, DoubleType, IntegerType, BooleanType, TimestampType,
 )
-from sklearn.preprocessing import LabelEncoder
+
 
 from src import config
 
@@ -305,58 +305,58 @@ def fingerprint_key(value: str) -> str:
     return " ".join(sorted(set(tokens)))
 
 
-def encode_categorical(
+def normalize_categorical(
     df:           pd.DataFrame,
     column:       str,
     is_inference: bool = False,
 ) -> pd.DataFrame:
     """
-    Normalise and ordinally encode a categorical column.
+    Normalise a categorical column via fingerprint keying.
 
-    Training: fit a LabelEncoder, persist to disk.
-    Inference: load the fitted encoder, map unseen labels to 'unknown'.
+    No ordinal encoding is applied — XGBoost's native categorical support
+    handles unordered categories optimally via subset splits.
+
+    Training: saves the known class vocabulary to disk for inference safety.
+    Inference: loads the vocabulary and remaps unseen values to 'unknown'.
     """
-    encoder_dir = config.OUTPUT_DIR / "models"
-    encoder_dir.mkdir(parents=True, exist_ok=True)
-    encoder_path = encoder_dir / f"{column}_label_encoder.joblib"
+    vocab_dir = config.OUTPUT_DIR / "models"
+    vocab_dir.mkdir(parents=True, exist_ok=True)
+    vocab_path = vocab_dir / f"{column}_vocab.joblib"
 
     if column not in df.columns:
-        logger.warning("Genre encoding skipped -- column '%s' not found", column)
+        logger.warning("Categorical normalization skipped -- column '%s' not found", column)
         return df
 
     df = df.copy()
     df[column] = df[column].fillna("unknown").apply(fingerprint_key)
     df[column] = df[column].replace("", "unknown")
 
-    encoded_column = f"{column}_encoded"
-
     if not is_inference:
-        encoder = LabelEncoder()
-        encoder.fit(df[column])
-        if "unknown" not in encoder.classes_:
-            encoder.classes_ = np.append(encoder.classes_, "unknown")
-        joblib.dump(encoder, encoder_path)
-        logger.info("LabelEncoder fitted: %d classes for '%s' -> saved to %s",
-                    len(encoder.classes_), column, encoder_path)
+        known_classes = sorted(df[column].unique().tolist())
+        if "unknown" not in known_classes:
+            known_classes.append("unknown")
+        joblib.dump(known_classes, vocab_path)
+        logger.info("Vocabulary saved: %d classes for '%s' -> %s",
+                    len(known_classes), column, vocab_path)
     else:
-        if not encoder_path.exists():
+        if not vocab_path.exists():
             raise FileNotFoundError(
-                f"No fitted encoder found at {encoder_path}. "
+                f"No vocabulary found at {vocab_path}. "
                 "Run the training pipeline before inference."
             )
-        encoder = joblib.load(encoder_path)
-        logger.info("LabelEncoder loaded from %s", encoder_path)
-        known_classes = set(encoder.classes_)
-        unseen = df[column][~df[column].isin(known_classes)].unique()
+        known_classes = joblib.load(vocab_path)
+        logger.info("Vocabulary loaded for '%s' from %s (%d classes)",
+                    column, vocab_path, len(known_classes))
+        known_set = set(known_classes)
+        unseen = df[column][~df[column].isin(known_set)].unique()
         if len(unseen) > 0:
-            logger.warning("Remapping %d unseen genre(s) to 'unknown': %s",
-                           len(unseen), list(unseen))
+            logger.warning("Remapping %d unseen value(s) in '%s' to 'unknown': %s",
+                           len(unseen), column, list(unseen))
             df[column] = df[column].where(
-                df[column].isin(known_classes), other="unknown"
+                df[column].isin(known_set), other="unknown"
             )
 
-    df[encoded_column] = encoder.transform(df[column])
-    logger.info("Genre encoding complete -- wrote '%s'", encoded_column)
+    logger.info("Normalized '%s': %d unique values", column, df[column].nunique())
     return df
 
 
@@ -430,13 +430,14 @@ class TMDBEnrichment:
         # Drop audit columns not needed downstream
         moviesDf = moviesDf.drop("tmdb_fetched_at")
 
-        # --- Categorical encoding (Pandas-side for sklearn LabelEncoder compatibility) ---
-        # Convert directly to Pandas from Spark for the encoding step.
-        logger.info("   -> [ENCODE]: Applying fingerprint keying + LabelEncoder...")
+        # --- Categorical normalization (Pandas-side for fingerprint keying) ---
+        # Convert directly to Pandas from Spark for the normalization step.
+        # No ordinal encoding — XGBoost handles categories natively.
+        logger.info("   -> [ENCODE]: Applying fingerprint normalization...")
         enriched_df = moviesDf.toPandas()
-        enriched_df = encode_categorical(enriched_df, column="tmdb_primary_genre", is_inference=is_inference)
-        enriched_df = encode_categorical(enriched_df, column="tmdb_original_language", is_inference=is_inference)
-        enriched_df = encode_categorical(enriched_df, column="tmdb_origin_country", is_inference=is_inference)
+        enriched_df = normalize_categorical(enriched_df, column="tmdb_primary_genre", is_inference=is_inference)
+        enriched_df = normalize_categorical(enriched_df, column="tmdb_original_language", is_inference=is_inference)
+        enriched_df = normalize_categorical(enriched_df, column="tmdb_origin_country", is_inference=is_inference)
 
         # Write final result for downstream compatibility.
         outputPath = config.PARQUET_DIR / "tmdb_enriched.parquet"
