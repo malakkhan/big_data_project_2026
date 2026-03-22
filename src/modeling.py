@@ -261,7 +261,13 @@ class XGBoostModeler:
 
     def _run_massive(self):
         """
-        PySpark Native distributed optimization loop for Massive Datasets.
+        PySpark-distributed Optuna optimization with unified output artifacts.
+        
+        Uses Spark's distributed CrossValidator for each Optuna trial, then
+        converts the winning hyperparameters back into a local sklearn
+        XGBClassifier to generate the same per-trial artifacts (ROC, CM, JSON),
+        OOF predictions, final .joblib model, feature schema, and categorical
+        maps as the normal run() flow.
         """
         logger.info(f"[{self.experiment_prefix}] Initializing MASSIVE Distributed PySpark XGBoost Optimization...")
         
@@ -300,8 +306,11 @@ class XGBoostModeler:
         # Cast label to double just in case
         prepared_df = prepared_df.withColumn("label", col("label").cast(T.DoubleType()))
         
+        # Also load Pandas data for local artifact generation (same as normal flow)
+        X, y = self.prep_data()
+        
         def massive_objective(trial):
-            param = {
+            spark_param = {
                 'features_col': 'features',
                 'label_col': 'label',
                 'n_estimators': trial.suggest_int('n_estimators', config.XGB_PARAM_BOUNDS['n_estimators'][0], config.XGB_PARAM_BOUNDS['n_estimators'][1]),
@@ -311,7 +320,7 @@ class XGBoostModeler:
                 'reg_lambda': trial.suggest_float('reg_lambda', config.XGB_PARAM_BOUNDS['reg_lambda'][0], config.XGB_PARAM_BOUNDS['reg_lambda'][1])
             }
             
-            xgb_est = SparkXGBClassifier(**param)
+            xgb_est = SparkXGBClassifier(**spark_param)
             evaluator = BinaryClassificationEvaluator(labelCol="label", rawPredictionCol="rawPrediction", metricName="areaUnderROC")
             
             cv = CrossValidator(estimator=xgb_est,
@@ -321,26 +330,116 @@ class XGBoostModeler:
                                 seed=42)
             
             cv_model = cv.fit(prepared_df)
-            return cv_model.avgMetrics[0]
+            spark_auc = cv_model.avgMetrics[0]
+            
+            # --- Local sklearn evaluation for artifact generation ---
+            # Convert the Spark trial's hyperparams into an sklearn XGBClassifier
+            # and run the same stratified K-fold used in the normal flow.
+            sklearn_param = {
+                'objective': 'binary:logistic',
+                'eval_metric': 'auc',
+                'n_estimators': spark_param['n_estimators'],
+                'learning_rate': spark_param['learning_rate'],
+                'max_depth': spark_param['max_depth'],
+                'reg_alpha': spark_param['reg_alpha'],
+                'reg_lambda': spark_param['reg_lambda'],
+                'tree_method': 'hist',
+                'random_state': 42,
+                'verbosity': 0,
+                'n_jobs': -1
+            }
+            
+            skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+            oof_indices = []
+            oof_y_true = []
+            oof_y_probs = []
+            
+            for train_idx, test_idx in skf.split(X, y):
+                X_train_full, y_train_full = X.iloc[train_idx], y.iloc[train_idx]
+                X_test, y_test = X.iloc[test_idx], y.iloc[test_idx]
+                
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_train_full, y_train_full, test_size=0.15, stratify=y_train_full, random_state=42
+                )
+                
+                model = xgb.XGBClassifier(**sklearn_param, early_stopping_rounds=20, enable_categorical=True)
+                model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+                
+                preds = model.predict_proba(X_test)[:, 1]
+                oof_indices.extend(test_idx)
+                oof_y_true.extend(y_test)
+                oof_y_probs.extend(preds)
+            
+            local_auc = roc_auc_score(oof_y_true, oof_y_probs)
+            
+            # Track best OOF predictions (same as normal flow)
+            if local_auc > self._best_oof_auc:
+                self._best_oof_auc = local_auc
+                self._best_oof_data = (
+                    np.array(oof_indices),
+                    np.array(oof_y_true),
+                    np.array(oof_y_probs),
+                )
+            
+            # Extract feature importances from the last fold's model
+            f_list = list(X.columns)
+            importances = model.feature_importances_
+            fi_dict = {f_list[i]: float(importances[i]) for i in range(len(f_list))}
+            
+            # Generate per-trial artifacts (ROC, CM, JSON) — identical to normal flow
+            self.plot_and_save_artifacts(
+                trial.number,
+                np.array(oof_y_true),
+                np.array(oof_y_probs),
+                local_auc,
+                sklearn_param,
+                feature_importances=fi_dict
+            )
+            
+            logger.info(f"Trial {trial.number}: Spark CV AUC={spark_auc:.4f}, Local OOF AUC={local_auc:.4f}")
+            return spark_auc
             
         optuna.logging.set_verbosity(optuna.logging.WARNING)
         study = optuna.create_study(direction="maximize")
-        # Run 5 iterations on massive to prove architecture (scale to 25 later)
-        study.optimize(massive_objective, n_trials=5)
+        study.optimize(massive_objective, n_trials=25)
         
         self.best_params = study.best_params
         logger.info(f"Massive Optimization finished. Best PySpark ROC-AUC: {study.best_value:.4f}")
         logger.info(f"Best Distributed Hyperparameters: {self.best_params}")
         
-        # Final Full-Pass Distributed Retrain
-        final_params = {'features_col': 'features', 'label_col': 'label', **self.best_params}
-        final_xgb = SparkXGBClassifier(**final_params)
-        final_model = final_xgb.fit(prepared_df)
+        # --- Final retrain and save (same as normal flow) ---
+        final_params = {
+            'objective': 'binary:logistic',
+            'tree_method': 'hist',
+            'random_state': 42,
+            **self.best_params
+        }
+        self.final_model = xgb.XGBClassifier(**final_params, enable_categorical=True)
+        self.final_model.fit(X, y)
         
-        model_path = str(config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_sparkxgb_best")
-        final_model.write().overwrite().save(model_path)
-        logger.info(f"Final Massive Distributed Model mapped to PySpark Directory: {model_path}")
+        model_path = config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_xgboost_best.joblib"
+        joblib.dump(self.final_model, model_path)
         
+        feature_cols_path = config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_feature_schema.json"
+        pd.Series(X.columns).to_json(feature_cols_path, orient="records")
+        
+        categories_dict = {col_name: list(X[col_name].cat.categories) for col_name in X.select_dtypes(include=['category']).columns}
+        with open(config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_categorical_maps.json", "w") as f:
+            json.dump(categories_dict, f)
+        
+        # Persist OOF predictions for misclassification reporting
+        if self._best_oof_data is not None:
+            oof_indices, oof_true, oof_probs = self._best_oof_data
+            oof_df = pd.DataFrame({
+                "row_index": oof_indices,
+                "true_label": oof_true,
+                "predicted_prob": oof_probs,
+            })
+            oof_path = config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_oof_predictions.parquet"
+            oof_df.to_parquet(oof_path, index=False)
+            logger.info(f"Out-of-fold predictions saved to {oof_path}")
+        
+        logger.info(f"Final Model mapped to {model_path}")
         return study.best_value
 
     def run(self):

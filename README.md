@@ -127,6 +127,9 @@ big_data_project_2026/
 3.  **Evaluate Feature Collinearity (Optional):**
     Generates a Spearman rank correlation heatmap at `output/analysis/feature_correlation_heatmap.png`.
 
+    *Command-line configurations:*
+    - `--threshold <float>`: Absolute correlation threshold to flag as highly collinear (default: 0.75).
+
     ```bash
     python analyze_covariance.py
     ```
@@ -136,6 +139,7 @@ big_data_project_2026/
 
     *Command-line configurations:*
     - `--enable-imputation`: Enable deep imputation (disabled by default).
+    - `--massive`: Execute XGBoost optimization via distributed PySpark clusters.
 
     ```bash
     python run_experiments.py
@@ -143,6 +147,10 @@ big_data_project_2026/
 
 5.  **Execute the Inference Predictor:**
     Automatically loads `SUPREME_WINNER_MODEL.joblib`. Outputs timestamped `True`/`False` text files to `output/submissions/`. Per-target TMDB caching prevents redundant API calls.
+
+    *Command-line configurations:*
+    - `--test_files <list>`: Space-separated list of CSV files to run inference on (default: `validation_hidden.csv test_hidden.csv`).
+    - `--enable-imputation`: Enable deep imputation during inference if it was used in training.
 
     ```bash
     python inference.py
