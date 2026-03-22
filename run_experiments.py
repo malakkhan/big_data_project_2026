@@ -26,7 +26,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("GlobalExperimentRunner")
 
-def run_experiments(disable_imputation=False):
+def run_experiments(disable_imputation=False, imputation_method="mlp"):
     """
     Executes a comprehensive grid search across macro pipeline parameters.
     
@@ -86,8 +86,8 @@ def run_experiments(disable_imputation=False):
                 imputed_dst.unlink()
             shutil.copy(enriched_src, imputed_dst)
         else:
-            logger.info("-> Executing Neural Imputation")
-            imputer = DeepImputer()
+            logger.info(f"-> Executing Neural Imputation ({imputation_method})")
+            imputer = DeepImputer(method=imputation_method)
             imputer.run()
         
         # 2. XGBoost & Optuna Bayesian Phase
@@ -206,6 +206,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run IMDB Global Experiments")
     parser.add_argument("--enable-imputation", action="store_true", help="Enable the DeepImputation Module (disabled by default).")
+    parser.add_argument("--imputation-method", choices=["mlp", "iterative", "knn"], default="mlp", help="Imputation algorithm strategy.")
     args = parser.parse_args()
     
-    run_experiments(disable_imputation=not args.enable_imputation)
+    run_experiments(disable_imputation=not args.enable_imputation, imputation_method=args.imputation_method)

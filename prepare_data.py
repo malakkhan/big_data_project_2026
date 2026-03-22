@@ -56,6 +56,7 @@ def main():
     parser.add_argument("--phase1", action="store_true", help="Phase 1: PySpark Ingestion + MAD Cleaning")
     parser.add_argument("--phase2", action="store_true", help="Phase 2: TMDB Enrichment + Genre Encoding")
     parser.add_argument("--phase3", action="store_true", help="Phase 3: Graph Feature Computation")
+    parser.add_argument("--outlier-method", choices=["mad", "isolation_forest"], default="mad", help="Outlier handling mechanism.")
     args = parser.parse_args()
     
     run_phase1 = args.phase1
@@ -78,7 +79,7 @@ def main():
         logger.info("=" * 60)
         logger.info("--- Phase 1: PySpark Ingestion + MAD Cleaning ---")
         logger.info("=" * 60)
-        ingestor = PySparkIngestor(pipeline="imdb", spark=spark)
+        ingestor = PySparkIngestor(pipeline="imdb", spark=spark, outlier_method=args.outlier_method)
         ingestor.run_with_cleaning()
 
     if run_phase2:

@@ -364,10 +364,14 @@ class PySparkIngestor:
         pipeline (PipelineMode): Active pipeline mode.
     """
 
-    def __init__(self, pipeline: PipelineMode = "general", spark: SparkSession = None):
+    def __init__(self, pipeline: PipelineMode = "general", spark: SparkSession = None, outlier_method: str = "mad"):
         if pipeline not in ("general", "imdb"):
             raise ValueError(f"Unknown pipeline mode '{pipeline}'. Expected 'general' or 'imdb'.")
+        if outlier_method not in ("mad", "isolation_forest"):
+            raise ValueError(f"Unknown outlier_method '{outlier_method}'. Expected 'mad' or 'isolation_forest'.")
+            
         self.pipeline = pipeline
+        self.outlier_method = outlier_method
 
         self.spark = spark or SparkSession.builder \
             .appName(config.SPARK_APP_NAME) \
@@ -696,6 +700,70 @@ class PySparkIngestor:
         )
         return df
 
+    def apply_isolation_forest_spark(self, df: DataFrame, columns: list[str]) -> DataFrame:
+        """
+        Multivariate outlier detection using Scikit-Learn IsolationForest.
+        Extracts numeric columns to Pandas, fits IF, tags anomalies (-1),
+        and clamps anomalous values to the column medians to preserve rows.
+        """
+        logger.info(f"Applying Isolation Forest on columns: {columns}")
+        import pandas as pd
+        from sklearn.ensemble import IsolationForest
+        
+        # We need a unique identifier. 'tconst' is our primary key.
+        if "tconst" not in df.columns:
+            logger.warning("Isolation Forest skipped -- 'tconst' primary key missing.")
+            return df
+            
+        # Collect only the required columns to driver
+        pdf = df.select("tconst", *columns).toPandas()
+        
+        # IF cannot handle NaNs. Fill NaNs with median temporarily just for fitting.
+        medians = {}
+        pdf_filled = pdf.copy()
+        for col in columns:
+            median_val = pdf[col].median()
+            medians[col] = median_val
+            pdf_filled[col] = pdf_filled[col].fillna(median_val)
+            
+        # Fit Isolation Forest
+        clf = IsolationForest(contamination=0.01, random_state=42, n_jobs=-1)
+        pdf['anomaly'] = clf.fit_predict(pdf_filled[columns])
+        
+        # Extract the tconsts of the anomalies
+        anomalies_pdf = pdf[pdf['anomaly'] == -1]
+        anomalous_tconsts = set(anomalies_pdf['tconst'].tolist())
+        
+        logger.info(f"Isolation Forest detected {len(anomalous_tconsts)} multivariate anomalies.")
+        
+        if not anomalous_tconsts:
+            return df
+            
+        # Broadcast the anomalous IDs to Spark workers for O(1) lookup
+        anomalous_broadcast = self.spark.sparkContext.broadcast(anomalous_tconsts)
+        
+        # Create a UDF to check if a row is anomalous
+        from pyspark.sql.types import BooleanType
+        def is_anomaly(tconst_val):
+            return tconst_val in anomalous_broadcast.value
+        is_anomaly_udf = F.udf(is_anomaly, BooleanType())
+        
+        # Clamp anomalous rows to the median
+        df = df.withColumn('_is_anomaly', is_anomaly_udf(F.col("tconst")))
+        
+        for col in columns:
+            if not pd.isna(medians[col]):
+                df = df.withColumn(
+                    col,
+                    F.when(
+                        F.col('_is_anomaly') & F.col(col).isNotNull(), 
+                        F.lit(int(medians[col]))
+                    ).otherwise(F.col(col))
+                )
+            
+        df = df.drop('_is_anomaly')
+        return df
+
     def run_with_cleaning(self, target_pattern: str = "train-*.csv") -> None:
         """
         Full Phase 1: ingest via PySpark, then apply MAD outlier
@@ -716,12 +784,17 @@ class PySparkIngestor:
             field.name for field in movies_df.schema.fields
             if isinstance(field.dataType, (IntegerType, LongType))
         ]
-        logger.info("Integer columns eligible for MAD filtering: %s", int_cols)
+        logger.info("Integer columns eligible for filtering: %s", int_cols)
 
-        for col in int_cols:
-            movies_df = self.apply_mad_clamp_spark(
-                movies_df, col, multiplier=config.MAD_THRESHOLD_MULTIPLIER
-            )
+        if self.outlier_method == "isolation_forest":
+            logger.info("--- Using Multivariate Isolation Forest ---")
+            movies_df = self.apply_isolation_forest_spark(movies_df, int_cols)
+        else:
+            logger.info("--- Using Univariate MAD Clamping ---")
+            for col in int_cols:
+                movies_df = self.apply_mad_clamp_spark(
+                    movies_df, col, multiplier=config.MAD_THRESHOLD_MULTIPLIER
+                )
 
         output_path = str(config.PARQUET_DIR / "cleaned_data.parquet")
         movies_df.write.mode("overwrite").parquet(output_path)

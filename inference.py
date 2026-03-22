@@ -54,7 +54,7 @@ def _build_spark() -> SparkSession:
         .config("spark.sql.parquet.writeLegacyFormat", "true") \
         .getOrCreate()
 
-def run_inference(targets, disable_imputation):
+def run_inference(targets, disable_imputation, imputation_method="mlp"):
     winner_config_path = config.OUTPUT_DIR / "models" / "SUPREME_WINNER_CONFIG.json"
     if not winner_config_path.exists():
         logger.error("FATAL: SUPREME_WINNER_CONFIG.json not found! Run run_experiments.py first.")
@@ -114,11 +114,11 @@ def run_inference(targets, disable_imputation):
                 imputed_path.unlink()
             shutil.copy(enriched_path, imputed_path)
         else:
-            logger.info("Phase 4: Neural Imputation...")
+            logger.info(f"Phase 4: Neural Imputation ({imputation_method})...")
             config.IMPUTER_EPOCHS = epochs
             config.IMPUTER_BATCH_SIZE = bs
             config.IMPUTER_LEARNING_RATE = lr
-            imputer = DeepImputer()
+            imputer = DeepImputer(method=imputation_method)
             imputer.run()
             
         # Phase 5: XGBoost Prediction
@@ -180,6 +180,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="IMDB Pipeline Inference Predictor")
     parser.add_argument("--test_files", nargs="+", default=["validation_hidden.csv", "test_hidden.csv"])
     parser.add_argument("--enable-imputation", action="store_true")
+    parser.add_argument("--imputation-method", choices=["mlp", "iterative", "knn"], default="mlp")
     
     args = parser.parse_args()
-    run_inference(args.test_files, disable_imputation=not args.enable_imputation)
+    run_inference(args.test_files, disable_imputation=not args.enable_imputation, imputation_method=args.imputation_method)
