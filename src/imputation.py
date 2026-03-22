@@ -36,10 +36,11 @@ class DeepImputer:
         categorical_features (list): Enumerable schema states evaluating to OH matrices.
     """
 
-    def __init__(self):
+    def __init__(self, method="mlp"):
         """
         Maps out deterministic pipeline boundaries required for the Scikit wrappers.
         """
+        self.method = method
         self.numeric_features = ["startYear", "endYear", "tmdb_popularity", "tmdb_vote_average", "tmdb_budget", "tmdb_revenue"]
         self.text_features = ["tmdb_production_company"]
         self.categorical_features = ["tmdb_primary_genre", "tmdb_original_language", "tmdb_origin_country"]
@@ -58,17 +59,29 @@ class DeepImputer:
         transformers = []
         for col in input_columns:
             if col in self.text_features:
-                transformers.append((
-                    f"hash_{col}", 
-                    HashingVectorizer(analyzer='char_wb', ngram_range=(2, 4), n_features=256), 
-                    col
-                ))
+                if self.method in ["knn", "iterative"]:
+                    from sklearn.preprocessing import FunctionTransformer
+                    transformers.append((
+                        f"hash_{col}", 
+                        Pipeline([
+                            ("hash", HashingVectorizer(analyzer='char_wb', ngram_range=(2, 4), n_features=256)),
+                            ("dense", FunctionTransformer(lambda x: x.toarray(), accept_sparse=True))
+                        ]), 
+                        col
+                    ))
+                else:
+                    transformers.append((
+                        f"hash_{col}", 
+                        HashingVectorizer(analyzer='char_wb', ngram_range=(2, 4), n_features=256), 
+                        col
+                    ))
             elif col in self.categorical_features:
+                sparse_flag = False if self.method in ["knn", "iterative"] else 'auto'
                 transformers.append((
                     f"ohe_{col}",
                     Pipeline([
                         ("impute", SimpleImputer(strategy="constant", fill_value="missing")),
-                        ("ohe", OneHotEncoder(handle_unknown='ignore'))
+                        ("ohe", OneHotEncoder(handle_unknown='ignore', sparse_output=sparse_flag))
                     ]),
                     [col]
                 ))
@@ -131,23 +144,37 @@ class DeepImputer:
         feature_extractor = self.build_feature_extractor(input_cols)
         
         if is_numeric:
-            model = MLPRegressor(
-                hidden_layer_sizes=(64, 32),
-                learning_rate_init=config.IMPUTER_LEARNING_RATE,
-                max_iter=config.IMPUTER_EPOCHS * 10,
-                batch_size=config.IMPUTER_BATCH_SIZE,
-                random_state=42,
-                early_stopping=True
-            )
+            if self.method == "iterative":
+                from sklearn.ensemble import ExtraTreesRegressor
+                model = ExtraTreesRegressor(n_estimators=50, random_state=42, n_jobs=-1)
+            elif self.method == "knn":
+                from sklearn.neighbors import KNeighborsRegressor
+                model = KNeighborsRegressor(n_neighbors=5, n_jobs=-1)
+            else:
+                model = MLPRegressor(
+                    hidden_layer_sizes=(64, 32),
+                    learning_rate_init=config.IMPUTER_LEARNING_RATE,
+                    max_iter=config.IMPUTER_EPOCHS * 10,
+                    batch_size=config.IMPUTER_BATCH_SIZE,
+                    random_state=42,
+                    early_stopping=True
+                )
         else:
-            model = MLPClassifier(
-                hidden_layer_sizes=(64, 32),
-                learning_rate_init=config.IMPUTER_LEARNING_RATE,
-                max_iter=config.IMPUTER_EPOCHS * 10,
-                batch_size=config.IMPUTER_BATCH_SIZE,
-                random_state=42,
-                early_stopping=True
-            )
+            if self.method == "iterative":
+                from sklearn.ensemble import ExtraTreesClassifier
+                model = ExtraTreesClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+            elif self.method == "knn":
+                from sklearn.neighbors import KNeighborsClassifier
+                model = KNeighborsClassifier(n_neighbors=5, n_jobs=-1)
+            else:
+                model = MLPClassifier(
+                    hidden_layer_sizes=(64, 32),
+                    learning_rate_init=config.IMPUTER_LEARNING_RATE,
+                    max_iter=config.IMPUTER_EPOCHS * 10,
+                    batch_size=config.IMPUTER_BATCH_SIZE,
+                    random_state=42,
+                    early_stopping=True
+                )
             
         pipeline = Pipeline([
             ("features", feature_extractor),

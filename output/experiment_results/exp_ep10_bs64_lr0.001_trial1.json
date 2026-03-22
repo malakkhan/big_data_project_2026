@@ -1,0 +1,49 @@
+{
+    "metrics": {
+        "roc_auc": 0.9911712703274942,
+        "accuracy": 0.9604221635883905,
+        "precision": 0.9569758766476001,
+        "sensitivity": 0.9644110275689223,
+        "specificity": 0.9564121945074326
+    },
+    "hyperparameters": {
+        "objective": "binary:logistic",
+        "eval_metric": "auc",
+        "n_estimators": 414,
+        "learning_rate": 0.03686365740449325,
+        "max_depth": 4,
+        "reg_alpha": 3.259428061445313,
+        "reg_lambda": 9.365141321274852,
+        "tree_method": "hist",
+        "random_state": 42,
+        "verbosity": 0,
+        "n_jobs": -1
+    },
+    "confusion_matrix": {
+        "True_Positives": 3848,
+        "False_Positives": 173,
+        "True_Negatives": 3796,
+        "False_Negatives": 142
+    },
+    "feature_importances_gain": {
+        "": 0.006307708099484444,
+        "runtimeMinutes": 0.014246957376599312,
+        "numVotes": 0.007587909698486328,
+        "startYear": 0.02941719815135002,
+        "endYear": 0.0,
+        "tmdb_popularity": 0.04332404211163521,
+        "tmdb_vote_average": 0.6691763997077942,
+        "tmdb_budget": 0.026146475225687027,
+        "tmdb_revenue": 0.016155946999788284,
+        "tmdb_primary_genre": 0.04921242967247963,
+        "tmdb_original_language": 0.0378318689763546,
+        "tmdb_origin_country": 0.031484927982091904,
+        "tmdb_production_company": 0.010686909779906273,
+        "director_avg_centrality": 0.011211567558348179,
+        "director_count": 0.005906911101192236,
+        "writer_avg_centrality": 0.016584526747465134,
+        "writer_count": 0.00848565623164177,
+        "writer_writer_max_collab_weight": 0.0023125207517296076,
+        "writer_director_max_collab_weight": 0.013920034281909466
+    }
+}

@@ -282,7 +282,7 @@ class XGBoostModeler:
         
         optuna.logging.set_verbosity(optuna.logging.WARNING)
         study = optuna.create_study(direction="maximize")
-        study.optimize(lambda trial: self.objective(trial, X, y), n_trials=3) 
+        study.optimize(lambda trial: self.objective(trial, X, y), n_trials=25) 
         
         self.best_params = study.best_params
         logger.info(f"Optimization finished. Best ROC-AUC: {study.best_value:.4f}")

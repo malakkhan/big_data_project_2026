@@ -1,0 +1,112 @@
+INFO:GlobalExperimentRunner:Initialized Global Experiment Runner. Testing 8 parameter topologies.
+INFO:GlobalExperimentRunner:============================================================
+INFO:GlobalExperimentRunner:RUNNING EXPERIMENT BLOCK 1/8
+INFO:GlobalExperimentRunner:Parameters: Epochs=5, BatchSize=64, LR=0.001
+INFO:GlobalExperimentRunner:============================================================
+INFO:GlobalExperimentRunner:-> Executing Neural Imputation (knn)
+WARNING:src.imputation:Target startYear is completely null or completely dense. Skipping Deep Imputation.
+INFO:GlobalExperimentRunner:-> Executing XGBoost Search Space
+INFO:src.modeling:[exp_ep5_bs64_lr0.001] Initializing XGBoost Optimization...
+INFO:src.modeling:Training dataset size: 7959 rows, 19 features.
+[W 2026-03-22 16:39:07,488] Trial 10 failed with parameters: {'n_estimators': 158, 'learning_rate': 0.010995916333324982, 'max_depth': 3, 'reg_alpha': 5.848510260000078, 'reg_lambda': 0.21619603443956326} because of the following error: KeyboardInterrupt().
+Traceback (most recent call last):
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/optuna/study/_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+  File "/Users/joaobarbara/Desktop/UVA/BD/big_data_project_2026/src/modeling.py", line 285, in <lambda>
+    study.optimize(lambda trial: self.objective(trial, X, y), n_trials=25)
+                                 ~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Users/joaobarbara/Desktop/UVA/BD/big_data_project_2026/src/modeling.py", line 227, in objective
+    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/xgboost/core.py", line 751, in inner_f
+    return func(**kwargs)
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/xgboost/sklearn.py", line 1806, in fit
+    self._Booster = train(
+                    ~~~~~^
+        params,
+        ^^^^^^^
+    ...<9 lines>...
+        callbacks=self.callbacks,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/xgboost/core.py", line 751, in inner_f
+    return func(**kwargs)
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/xgboost/training.py", line 200, in train
+    bst.update(dtrain, iteration=i, fobj=obj)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/xgboost/core.py", line 2391, in update
+    _LIB.XGBoosterUpdateOneIter(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self.handle, ctypes.c_int(iteration), dtrain.handle
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+KeyboardInterrupt
+[W 2026-03-22 16:39:07,490] Trial 10 failed with value None.
+Traceback (most recent call last):
+  File "/Users/joaobarbara/Desktop/UVA/BD/big_data_project_2026/run_experiments.py", line 212, in <module>
+    run_experiments(disable_imputation=not args.enable_imputation, imputation_method=args.imputation_method)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/joaobarbara/Desktop/UVA/BD/big_data_project_2026/run_experiments.py", line 96, in run_experiments
+    current_auc = modeler.run()
+  File "/Users/joaobarbara/Desktop/UVA/BD/big_data_project_2026/src/modeling.py", line 285, in run
+    study.optimize(lambda trial: self.objective(trial, X, y), n_trials=25)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/optuna/study/study.py", line 490, in optimize
+    _optimize(
+    ~~~~~~~~~^
+        study=self,
+        ^^^^^^^^^^^
+    ...<7 lines>...
+        show_progress_bar=show_progress_bar,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/optuna/study/_optimize.py", line 68, in _optimize
+    _optimize_sequential(
+    ~~~~~~~~~~~~~~~~~~~~^
+        study,
+        ^^^^^^
+    ...<8 lines>...
+        progress_bar=progress_bar,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/optuna/study/_optimize.py", line 165, in _optimize_sequential
+    frozen_trial_id = _run_trial(study, func, catch)
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/optuna/study/_optimize.py", line 263, in _run_trial
+    raise func_err
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/optuna/study/_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+  File "/Users/joaobarbara/Desktop/UVA/BD/big_data_project_2026/src/modeling.py", line 285, in <lambda>
+    study.optimize(lambda trial: self.objective(trial, X, y), n_trials=25)
+                                 ~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Users/joaobarbara/Desktop/UVA/BD/big_data_project_2026/src/modeling.py", line 227, in objective
+    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/xgboost/core.py", line 751, in inner_f
+    return func(**kwargs)
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/xgboost/sklearn.py", line 1806, in fit
+    self._Booster = train(
+                    ~~~~~^
+        params,
+        ^^^^^^^
+    ...<9 lines>...
+        callbacks=self.callbacks,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/xgboost/core.py", line 751, in inner_f
+    return func(**kwargs)
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/xgboost/training.py", line 200, in train
+    bst.update(dtrain, iteration=i, fobj=obj)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/joaobarbara/Desktop/UVA/.venv/lib/python3.13/site-packages/xgboost/core.py", line 2391, in update
+    _LIB.XGBoosterUpdateOneIter(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self.handle, ctypes.c_int(iteration), dtrain.handle
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+KeyboardInterrupt

@@ -4,12 +4,12 @@
         "BatchSize": 64,
         "LR": 0.001
     },
-    "best_roc_auc": 0.991359,
+    "best_roc_auc": 0.991509,
     "optimized_xgboost_params": {
-        "n_estimators": 386,
-        "learning_rate": 0.07270138142515468,
-        "max_depth": 3,
-        "reg_alpha": 0.03357405355911225,
-        "reg_lambda": 7.515608976347945
+        "n_estimators": 483,
+        "learning_rate": 0.21990212352409996,
+        "max_depth": 5,
+        "reg_alpha": 4.866705802617611,
+        "reg_lambda": 9.691267908964965
     }
 }
