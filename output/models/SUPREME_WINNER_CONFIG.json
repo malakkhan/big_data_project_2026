@@ -4,7 +4,7 @@
         "BatchSize": 64,
         "LR": 0.001
     },
-    "best_roc_auc": 0.99149,
+    "best_roc_auc": 0.988183,
     "optimized_xgboost_params": {
         "n_estimators": 202,
         "learning_rate": 0.02428231043086938,

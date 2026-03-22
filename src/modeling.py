@@ -41,7 +41,7 @@ class XGBoostModeler:
         final_model (xgb.XGBClassifier): The finalized trained predictor.
     """
 
-    def __init__(self, experiment_prefix="default"):
+    def __init__(self, experiment_prefix="default", massive=False):
         """
         Initializes the modeler.
 
@@ -50,6 +50,7 @@ class XGBoostModeler:
                                      and precision visuals into `experiment_results/`.
         """
         self.experiment_prefix = experiment_prefix
+        self.massive = massive
         self.best_params = None
         self.final_model = None
         self._best_oof_auc = 0.0
@@ -258,6 +259,90 @@ class XGBoostModeler:
             
         return final_auc
 
+    def _run_massive(self):
+        """
+        PySpark Native distributed optimization loop for Massive Datasets.
+        """
+        logger.info(f"[{self.experiment_prefix}] Initializing MASSIVE Distributed PySpark XGBoost Optimization...")
+        
+        from pyspark.sql import SparkSession
+        import pyspark.sql.types as T
+        from pyspark.ml.feature import VectorAssembler, StringIndexer
+        from pyspark.ml import Pipeline
+        from pyspark.ml.evaluation import BinaryClassificationEvaluator
+        from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
+        from xgboost.spark import SparkXGBClassifier
+        
+        spark = SparkSession.builder.appName("MassiveOptunaXGB").getOrCreate()
+        df = spark.read.parquet(str(config.PARQUET_DIR / "imputed_features.parquet"))
+        
+        drop_cols = ["tconst", "synthetic_index", "primaryTitle", "originalTitle", "C1", "tmdb_success"]
+        feature_cols = [c for c in df.columns if c not in drop_cols and c != "label"]
+        
+        categorical_cols = [f.name for f in df.schema.fields if isinstance(f.dataType, T.StringType) and f.name in feature_cols]
+        numeric_cols = [c for c in feature_cols if c not in categorical_cols]
+        
+        # Native MLlib encoding pipeline for XGBoost VectorAssembler
+        indexers = [StringIndexer(inputCol=c, outputCol=f"{c}_idx", handleInvalid="keep") for c in categorical_cols]
+        indexed_cat_cols = [f"{c}_idx" for c in categorical_cols]
+        
+        # Cast numeric cols to double to avoid datatype mismatch in VectorAssembler
+        from pyspark.sql.functions import col
+        for c in numeric_cols:
+            df = df.withColumn(c, col(c).cast(T.DoubleType()))
+        
+        assembler = VectorAssembler(inputCols=numeric_cols + indexed_cat_cols, outputCol="features", handleInvalid="keep")
+        pipeline = Pipeline(stages=indexers + [assembler])
+        
+        prep_model = pipeline.fit(df)
+        prepared_df = prep_model.transform(df)
+        
+        # Cast label to double just in case
+        prepared_df = prepared_df.withColumn("label", col("label").cast(T.DoubleType()))
+        
+        def massive_objective(trial):
+            param = {
+                'features_col': 'features',
+                'label_col': 'label',
+                'n_estimators': trial.suggest_int('n_estimators', config.XGB_PARAM_BOUNDS['n_estimators'][0], config.XGB_PARAM_BOUNDS['n_estimators'][1]),
+                'learning_rate': trial.suggest_float('learning_rate', config.XGB_PARAM_BOUNDS['learning_rate'][0], config.XGB_PARAM_BOUNDS['learning_rate'][1], log=True),
+                'max_depth': trial.suggest_int('max_depth', config.XGB_PARAM_BOUNDS['max_depth'][0], config.XGB_PARAM_BOUNDS['max_depth'][1]),
+                'reg_alpha': trial.suggest_float('reg_alpha', config.XGB_PARAM_BOUNDS['reg_alpha'][0], config.XGB_PARAM_BOUNDS['reg_alpha'][1]), 
+                'reg_lambda': trial.suggest_float('reg_lambda', config.XGB_PARAM_BOUNDS['reg_lambda'][0], config.XGB_PARAM_BOUNDS['reg_lambda'][1])
+            }
+            
+            xgb_est = SparkXGBClassifier(**param)
+            evaluator = BinaryClassificationEvaluator(labelCol="label", rawPredictionCol="rawPrediction", metricName="areaUnderROC")
+            
+            cv = CrossValidator(estimator=xgb_est,
+                                estimatorParamMaps=ParamGridBuilder().build(),
+                                evaluator=evaluator,
+                                numFolds=3,
+                                seed=42)
+            
+            cv_model = cv.fit(prepared_df)
+            return cv_model.avgMetrics[0]
+            
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        study = optuna.create_study(direction="maximize")
+        # Run 5 iterations on massive to prove architecture (scale to 25 later)
+        study.optimize(massive_objective, n_trials=5)
+        
+        self.best_params = study.best_params
+        logger.info(f"Massive Optimization finished. Best PySpark ROC-AUC: {study.best_value:.4f}")
+        logger.info(f"Best Distributed Hyperparameters: {self.best_params}")
+        
+        # Final Full-Pass Distributed Retrain
+        final_params = {'features_col': 'features', 'label_col': 'label', **self.best_params}
+        final_xgb = SparkXGBClassifier(**final_params)
+        final_model = final_xgb.fit(prepared_df)
+        
+        model_path = str(config.OUTPUT_DIR / "models" / f"{self.experiment_prefix}_sparkxgb_best")
+        final_model.write().overwrite().save(model_path)
+        logger.info(f"Final Massive Distributed Model mapped to PySpark Directory: {model_path}")
+        
+        return study.best_value
+
     def run(self):
         """
         Executes the optimization framework and retrains the champion model.
@@ -269,6 +354,9 @@ class XGBoostModeler:
         Returns:
             None
         """
+        if self.massive:
+            return self._run_massive()
+            
         logger.info(f"[{self.experiment_prefix}] Initializing XGBoost Optimization...")
         
         try:

@@ -26,7 +26,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("GlobalExperimentRunner")
 
-def run_experiments(disable_imputation=False):
+def run_experiments(disable_imputation=False, massive=False):
     """
     Executes a comprehensive grid search across macro pipeline parameters.
     
@@ -92,7 +92,7 @@ def run_experiments(disable_imputation=False):
         
         # 2. XGBoost & Optuna Bayesian Phase
         logger.info("-> Executing XGBoost Search Space")
-        modeler = XGBoostModeler(experiment_prefix=macro_prefix)
+        modeler = XGBoostModeler(experiment_prefix=macro_prefix, massive=massive)
         current_auc = modeler.run()
         
         if current_auc is not None and current_auc > best_overall_auc:
@@ -206,6 +206,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run IMDB Global Experiments")
     parser.add_argument("--enable-imputation", action="store_true", help="Enable the DeepImputation Module (disabled by default).")
+    parser.add_argument("--massive", action="store_true", help="Execute XGBoost optimization via distributed PySpark clusters.")
     args = parser.parse_args()
     
-    run_experiments(disable_imputation=not args.enable_imputation)
+    run_experiments(disable_imputation=not args.enable_imputation, massive=args.massive)
