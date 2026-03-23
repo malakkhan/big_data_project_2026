@@ -84,7 +84,7 @@ def run_inference(targets, disable_imputation):
 
         # Phase 1: PySpark Ingestion (no MAD cleaning for inference)
         logger.info(f"Phase 1: PySpark Ingestion for '{target}'...")
-        ingestor = PySparkIngestor(spark=spark)
+        ingestor = PySparkIngestor(pipeline="imdb", spark=spark)
         movies_spark_df = ingestor.run(target_pattern=target)
         
         # Write cleaned_data.parquet via Spark (legacy format, no .toPandas())

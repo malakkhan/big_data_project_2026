@@ -184,13 +184,19 @@ class TMDBFetcher:
         self.audit.error(f"tconst={tconst} hop={hop} all {self.maxRetries} attempts exhausted.")
         return None
 
-    def _fetchOne(self, tconst: str) -> dict:
+    def _fetchOne(self, movie_row: dict) -> dict:
         """
-        Fetch all TMDB fields for a single tconst via a two-hop REST call.
+        Fetch all TMDB fields for a single movie via a two-hop REST call.
 
-        Hop 1: /find/{tconst} -> resolve to TMDB movie ID
+        Hop 1: /search/movie -> resolve to TMDB movie ID using release year and title
         Hop 2: /movie/{tmdb_id} -> fetch full movie record
         """
+        tconst = movie_row["tconst"]
+        start_year = movie_row.get("startYear")
+        end_year = movie_row.get("endYear")
+        original_title = movie_row.get("originalTitle")
+        primary_title = movie_row.get("primaryTitle")
+        
         fetchedAt = datetime.now(timezone.utc)
         nullRow = {
             "tconst": tconst, "tmdb_popularity": None, "tmdb_vote_average": None,
@@ -203,21 +209,75 @@ class TMDBFetcher:
         if not self.token:
             return nullRow
 
-        resFind = self._getWithRetry(
-            url=f"{self._BASE_URL}/find/{tconst}",
-            params={"external_source": "imdb_id"}, tconst=tconst, hop=1,
-        )
-        if resFind is None or resFind.status_code != 200:
+        def _search(query: str, year_val) -> int | None:
+            """Search TMDB with a single query+year combo. Returns tmdb_id or None."""
+            params = {"query": query}
+            if year_val:
+                params["primary_release_year"] = year_val
+            res = self._getWithRetry(
+                url=f"{self._BASE_URL}/search/movie",
+                params=params, tconst=tconst, hop=1,
+            )
+            if res and res.status_code == 200:
+                results = res.json().get("results", [])
+                if results:
+                    return results[0]["id"]
+            return None
+
+        # Build cleaned title variants
+        import re as _re
+        punct_spaces_primary  = _re.sub(r"[^a-zA-Z0-9\s]", " ", primary_title).strip() if primary_title else None
+        punct_spaces_original = _re.sub(r"[^a-zA-Z0-9\s]", " ", original_title).strip() if original_title else None
+        punct_gone_primary    = _re.sub(r"[^a-zA-Z0-9]", "",  primary_title).strip() if primary_title else None
+        punct_gone_original   = _re.sub(r"[^a-zA-Z0-9]", "",  original_title).strip() if original_title else None
+
+        # 12-step strategic search matrix (order matters):
+        #  1. primary title + startYear
+        #  2. original title + startYear
+        #  3. primary title + endYear
+        #  4. original title + endYear
+        #  5. primary title (punct→spaces) + startYear
+        #  6. original title (punct→spaces) + startYear
+        #  7. primary title (punct→spaces) + endYear
+        #  8. original title (punct→spaces) + endYear
+        #  9. primary title (punct removed) + startYear
+        # 10. original title (punct removed) + startYear
+        # 11. primary title (punct removed) + endYear
+        # 12. original title (punct removed) + endYear
+        search_attempts = [
+            (primary_title,          start_year),
+            (original_title,         start_year),
+            (primary_title,          end_year),
+            (original_title,         end_year),
+            (punct_spaces_primary,   start_year),
+            (punct_spaces_original,  start_year),
+            (punct_spaces_primary,   end_year),
+            (punct_spaces_original,  end_year),
+            (punct_gone_primary,     start_year),
+            (punct_gone_original,    start_year),
+            (punct_gone_primary,     end_year),
+            (punct_gone_original,    end_year),
+        ]
+
+        tmdb_id = None
+        seen = set()
+        for query, year in search_attempts:
+            if not query:
+                continue
+            key = (query, year)
+            if key in seen:
+                continue
+            seen.add(key)
+            tmdb_id = _search(query, year)
+            if tmdb_id is not None:
+                break
+
+        if tmdb_id is None:
+            self.audit.info(f"tconst={tconst} hop=1 no match found in TMDB search.")
             return nullRow
 
-        movieResults = resFind.json().get("movie_results", [])
-        if not movieResults:
-            self.audit.info(f"tconst={tconst} hop=1 not found in TMDB movie_results.")
-            return nullRow
-
-        tmdbId = movieResults[0]["id"]
         resMovie = self._getWithRetry(
-            url=f"{self._BASE_URL}/movie/{tmdbId}",
+            url=f"{self._BASE_URL}/movie/{tmdb_id}",
             params={}, tconst=tconst, hop=2,
         )
         if resMovie is None or resMovie.status_code != 200:
@@ -227,6 +287,9 @@ class TMDBFetcher:
         genres    = m.get("genres", [])
         companies = m.get("production_companies", [])
         runtime   = m.get("runtime")
+        
+        release_date = m.get("release_date")
+        release_year = release_date[:4] if release_date else None
 
         return {
             "tconst":                  tconst,
@@ -243,14 +306,14 @@ class TMDBFetcher:
             "tmdb_fetched_at":         fetchedAt,
         }
 
-    def fetchAndSave(self, tconsts: list[str], outputPath: Path, spark: SparkSession) -> None:
+    def fetchAndSave(self, movie_rows: list[dict], outputPath: Path, spark: SparkSession) -> None:
         """Fetch TMDB metadata for all tconsts concurrently and write to Parquet.
         
         Uses a ThreadPoolExecutor with 10 workers and a semaphore-based rate
         limiter to stay within TMDB's ~40 req/s free-tier limit while achieving
         ~10× speedup over sequential fetching.
         """
-        logger.info(f"[TMDB] Starting concurrent fetch for {len(tconsts)} titles (10 workers).")
+        logger.info(f"[TMDB] Starting concurrent fetch for {len(movie_rows)} titles (10 workers).")
         logger.info(f"[TMDB] Audit log: {self.audit.handlers[0].baseFilename}")
 
         rows = []
@@ -258,24 +321,24 @@ class TMDBFetcher:
         lock = threading.Lock()
         semaphore = threading.Semaphore(10)
 
-        def _fetch_with_limit(tconst: str) -> dict:
+        def _fetch_with_limit(movie_row: dict) -> dict:
             with semaphore:
-                result = self._fetchOne(tconst)
+                result = self._fetchOne(movie_row)
                 time.sleep(self.requestDelay)
                 return result
 
         with ThreadPoolExecutor(max_workers=10) as pool:
-            futures = {pool.submit(_fetch_with_limit, tc): tc for tc in tconsts}
+            futures = {pool.submit(_fetch_with_limit, row): row for row in movie_rows}
             for i, future in enumerate(as_completed(futures), start=1):
                 row = future.result()
                 rows.append(row)
                 if row["tmdb_success"]:
                     with lock:
                         successCount += 1
-                if i % 100 == 0 or i == len(tconsts):
-                    logger.info(f"[TMDB] {i}/{len(tconsts)} fetched | success={successCount} | failed={i - successCount}")
+                if i % 100 == 0 or i == len(movie_rows):
+                    logger.info(f"[TMDB] {i}/{len(movie_rows)} fetched | success={successCount} | failed={i - successCount}")
 
-        logger.info(f"[TMDB] Fetch complete. Success rate: {successCount}/{len(tconsts)} ({100 * successCount / max(len(tconsts), 1):.1f}%).")
+        logger.info(f"[TMDB] Fetch complete. Success rate: {successCount}/{len(movie_rows)} ({100 * successCount / max(len(movie_rows), 1):.1f}%).")
 
         tmdbDf = spark.createDataFrame(pd.DataFrame(rows), schema=TMDB_PARQUET_SCHEMA)
         tmdbDf.write.mode("overwrite").parquet(str(outputPath))
@@ -419,14 +482,14 @@ class TMDBEnrichment:
         if tmdbPath.exists():
             logger.info(f"[TMDB] Parquet already exists at {tmdbPath}, skipping fetch.")
         else:
-            logger.info("[TMDB] Collecting tconst list for API fetch.")
-            tconsts = [
-                row["tconst"]
-                for row in moviesDf.select("tconst").collect()
+            logger.info("[TMDB] Collecting movie details for API fetch.")
+            movie_rows = [
+                row.asDict()
+                for row in moviesDf.select("tconst", "startYear", "endYear", "originalTitle", "primaryTitle").collect()
                 if row["tconst"] is not None
             ]
             fetcher = TMDBFetcher()
-            fetcher.fetchAndSave(tconsts=tconsts, outputPath=tmdbPath, spark=self.spark)
+            fetcher.fetchAndSave(movie_rows=movie_rows, outputPath=tmdbPath, spark=self.spark)
 
         tmdbDf = self.spark.read.parquet(str(tmdbPath))
 
