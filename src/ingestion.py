@@ -65,8 +65,8 @@ PipelineMode = Literal["general", "imdb"]
 # that operates at the JVM level with no Python serialization overhead.
 # It cannot express 1-to-N expansions (e.g. ß → ss), so those are handled
 # separately below via regexp_replace before this mapping is applied.
-_DIACRITICS = "ÀÁÂÃÄÅàáâãäåÒÓÔÕÖØòóôõöøÈÉÊËèéêëÇçÌÍÎÏìíîïÙÚÛÜùúûüÿÑñ"
-_ASCII_REPL  = "AAAAAAaaaaaaOOOOOOooooooEEEEeeeeCcIIIIiiiiUUUUuuuuyNn"
+_DIACRITICS = "ÀÁÂÃÄÅàáâãäåÒÓÔÕÖØòóôõöøÈÉÊËèéêëÇçÌÍÎÏìíîïÙÚÛÜùúûüÿÑñớ"
+_ASCII_REPL  = "AAAAAAaaaaaaOOOOOOooooooEEEEeeeeCcIIIIiiiiUUUUuuuuyNno"
 
 # Characters that expand to more than one ASCII character.
 # F.translate() cannot handle these (it is strictly 1-to-1), so we resolve
@@ -228,6 +228,9 @@ def _apply_text_normalisation(df: DataFrame, col_name: str) -> DataFrame:
     Returns:
         DataFrame with the column replaced by its normalised form.
     """
+    # Step 0: Strip leading/trailing quotation marks from text
+    df = df.withColumn(col_name, F.regexp_replace(F.col(col_name), r'^"|"$', ''))
+
     # Steps 1 & 2: structural whitespace cleanup.
     # trim() handles leading/trailing; regexp_replace collapses internal runs.
     df = df.withColumn(
@@ -488,8 +491,6 @@ class PySparkIngestor:
 
         if self.pipeline == "imdb":
             logger.info("   -> [IMDB]: Applying domain-specific pre-classification repairs.")
-            logger.info("   -> [IMDB]: Dropping primaryTitle and originalTitle sequentially.")
-            df = df.drop("primaryTitle", "originalTitle")
 
             # Stage 3: temporal swap — must precede classification so that year
             # values are in the correct columns when the int classifier runs.
